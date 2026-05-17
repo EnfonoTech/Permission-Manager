@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "creation": "2025-10-29 09:22:40.845755",
+ "default_view": "List",
+ "description": "Represents a state in an PM Workflow and which roles can edit it.",
+ "doctype": "DocType",
+ "document_type": "Setup",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "state",
+  "doc_status",
+  "update_field",
+  "update_value",
+  "column_break_4",
+  "is_optional_state",
+  "avoid_status_override",
+  "next_action_email_template",
+  "edit_permission_type",
+  "allow_edit",
+  "company",
+  "send_email",
+  "section_break_9",
+  "message",
+  "workflow_builder_id"
+ ],
+ "fields": [
+  {
+   "columns": 3,
+   "fieldname": "state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "State",
+   "options": "Workflow State",
+   "print_width": "160px",
+   "reqd": 1,
+   "width": "160px"
+  },
+  {
+   "columns": 2,
+   "default": "0",
+   "description": "0 - Draft; 1 - Submitted; 2 - Cancelled",
+   "fieldname": "doc_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Doc Status",
+   "options": "0\n1\n2",
+   "print_width": "80px",
+   "width": "80px"
+  },
+  {
+   "fieldname": "update_field",
+   "fieldtype": "Select",
+   "label": "Update Field"
+  },
+  {
+   "fieldname": "update_value",
+   "fieldtype": "Data",
+   "label": "Update Value"
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Workflow Action is not created for optional states.",
+   "fieldname": "is_optional_state",
+   "fieldtype": "Check",
+   "label": "Is Optional State"
+  },
+  {
+   "default": "0",
+   "description": "If checked, workflow status will not override status in list view.",
+   "fieldname": "avoid_status_override",
+   "fieldtype": "Check",
+   "label": "Don't Override Status"
+  },
+  {
+   "fieldname": "next_action_email_template",
+   "fieldtype": "Link",
+   "label": "Next Action Email Template",
+   "options": "Email Template"
+  },
+  {
+   "fieldname": "edit_permission_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Edit Permission Type",
+   "link_filters": "[[\"DocType\",\"name\",\"in\",[\"User\",\"Role\"]]]",
+   "options": "DocType",
+   "print_width": "160px",
+   "reqd": 1,
+   "width": "160px"
+  },
+  {
+   "fieldname": "allow_edit",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Only Allow Edit For",
+   "options": "edit_permission_type",
+   "print_width": "160px",
+   "reqd": 1,
+   "width": "160px"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "default": "1",
+   "description": "Send email when document transitions to this state.",
+   "fieldname": "send_email",
+   "fieldtype": "Check",
+   "label": "Send Email On State"
+  },
+  {
+   "fieldname": "section_break_9",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Text",
+   "in_list_view": 1,
+   "label": "Message",
+   "print_width": "160px",
+   "width": "160px"
+  },
+  {
+   "fieldname": "workflow_builder_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Workflow Builder ID"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-03 00:37:30.334919",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Workflow Document State",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

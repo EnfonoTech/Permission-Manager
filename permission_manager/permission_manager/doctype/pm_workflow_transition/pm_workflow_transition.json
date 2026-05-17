@@ -1,0 +1,188 @@
+{
+ "actions": [],
+ "creation": "2025-10-29 09:13:25.763158",
+ "default_view": "List",
+ "description": "Defines how an PM Workflow moves from one state to another.",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "state",
+  "action",
+  "next_state",
+  "send_email_to_creator",
+  "require_comment",
+  "column_break_eyal",
+  "approver_type",
+  "allowed",
+  "company",
+  "allow_self_approval",
+  "approver_matrix_section",
+  "use_approver_matrix",
+  "matrix_level",
+  "matrix_fallback_role",
+  "conditions",
+  "condition",
+  "column_break_7",
+  "example",
+  "workflow_builder_id"
+ ],
+ "fields": [
+  {
+   "fieldname": "state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "State",
+   "options": "Workflow State",
+   "print_width": "200px",
+   "reqd": 1,
+   "width": "200px"
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "Workflow Action Master",
+   "print_width": "200px",
+   "reqd": 1,
+   "width": "200px"
+  },
+  {
+   "fieldname": "next_state",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Next State",
+   "options": "Workflow State",
+   "print_width": "200px",
+   "reqd": 1,
+   "width": "200px"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.allow_self_approval == 1",
+   "fieldname": "send_email_to_creator",
+   "fieldtype": "Check",
+   "label": "Send Email To Creator"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.allow_self_approval == 1",
+   "description": "Require the approver to enter a comment before completing this transition.",
+   "fieldname": "require_comment",
+   "fieldtype": "Check",
+   "label": "Require Comment"
+  },
+  {
+   "fieldname": "column_break_eyal",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval: !doc.use_approver_matrix",
+   "fieldname": "approver_type",
+   "fieldtype": "Link",
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_preview": 1,
+   "in_standard_filter": 1,
+   "label": "Approver Type",
+   "link_filters": "[[\"DocType\",\"name\",\"in\",[\"Role\",\"User\"]]]",
+   "options": "DocType",
+   "mandatory_depends_on": "eval: !doc.use_approver_matrix"
+  },
+  {
+   "depends_on": "eval: !doc.use_approver_matrix",
+   "fieldname": "allowed",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Approver",
+   "options": "approver_type",
+   "print_width": "200px",
+   "mandatory_depends_on": "eval: !doc.use_approver_matrix",
+   "width": "200px"
+  },
+  {
+   "depends_on": "eval: doc.approver_type == \"Role\" && !doc.use_approver_matrix",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "default": "1",
+   "description": "Allow the document creator to approve their own document.",
+   "fieldname": "allow_self_approval",
+   "fieldtype": "Check",
+   "label": "Allow Self Approval"
+  },
+  {
+   "collapsible": 0,
+   "fieldname": "approver_matrix_section",
+   "fieldtype": "Section Break",
+   "label": "Employee Approver Matrix"
+  },
+  {
+   "default": "0",
+   "description": "If checked, the approver is resolved from the submitter's Employee Approval Chain instead of the Role/User above.",
+   "fieldname": "use_approver_matrix",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Use Employee Approver Matrix"
+  },
+  {
+   "default": "1",
+   "depends_on": "eval: doc.use_approver_matrix",
+   "description": "Which level to look up in the employee's PM Approval Chain (1 = first approver, 2 = second, etc.)",
+   "fieldname": "matrix_level",
+   "fieldtype": "Int",
+   "label": "Approval Level"
+  },
+  {
+   "depends_on": "eval: doc.use_approver_matrix",
+   "description": "Fallback role if no approval chain entry is found for the submitter at this level.",
+   "fieldname": "matrix_fallback_role",
+   "fieldtype": "Link",
+   "label": "Fallback Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "conditions",
+   "fieldtype": "Section Break",
+   "label": "Conditions"
+  },
+  {
+   "fieldname": "condition",
+   "fieldtype": "Code",
+   "label": "Condition",
+   "options": "Python"
+  },
+  {
+   "fieldname": "column_break_7",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "example",
+   "fieldtype": "HTML",
+   "label": "Example",
+   "options": "<pre><code>doc.grand_total &gt; 0</code></pre>\n<p>Write conditions in simple Python. Allowed functions:</p>\n<ul>\n<li>frappe.db.get_value</li>\n<li>frappe.db.get_list</li>\n<li>frappe.session</li>\n<li>frappe.utils.now_datetime</li>\n<li>frappe.utils.get_datetime</li>\n<li>frappe.utils.add_to_date</li>\n<li>frappe.utils.now</li>\n</ul>"
+  },
+  {
+   "fieldname": "workflow_builder_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Workflow Builder ID"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-17 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Workflow Transition",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

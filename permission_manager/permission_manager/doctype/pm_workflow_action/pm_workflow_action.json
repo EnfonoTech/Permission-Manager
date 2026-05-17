@@ -1,0 +1,122 @@
+{
+  "actions": [],
+  "creation": "2025-10-29 11:08:41.350705",
+  "default_view": "List",
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "status",
+    "reference_name",
+    "reference_doctype",
+    "workflow_state",
+    "column_break_5",
+    "assigned_to",
+    "for_submitter",
+    "completed_by_role",
+    "completed_by",
+    "user",
+    "section_break_qvyg",
+    "permitted_roles"
+  ],
+  "fields": [
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Status",
+      "options": "Open\nCompleted\nReassigned"
+    },
+    {
+      "fieldname": "reference_name",
+      "fieldtype": "Dynamic Link",
+      "label": "Reference Name",
+      "options": "reference_doctype"
+    },
+    {
+      "fieldname": "reference_doctype",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Reference Document Type",
+      "options": "DocType"
+    },
+    {
+      "fieldname": "workflow_state",
+      "fieldtype": "Data",
+      "label": "Workflow State"
+    },
+    {
+      "fieldname": "column_break_5",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "Specific user assigned via Employee Approver Matrix (overrides role-based routing)",
+      "fieldname": "assigned_to",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Assigned To",
+      "options": "User"
+    },
+    {
+      "description": "Document owner/submitter this assignment resolves for",
+      "fieldname": "for_submitter",
+      "fieldtype": "Link",
+      "label": "For Submitter",
+      "options": "User"
+    },
+    {
+      "depends_on": "eval: doc.completed_by_role",
+      "fieldname": "completed_by_role",
+      "fieldtype": "Link",
+      "label": "Completed By Role",
+      "options": "Role",
+      "read_only": 1
+    },
+    {
+      "depends_on": "eval: doc.completed_by",
+      "fieldname": "completed_by",
+      "fieldtype": "Link",
+      "label": "Completed By User",
+      "options": "User",
+      "read_only": 1
+    },
+    {
+      "fieldname": "user",
+      "fieldtype": "Link",
+      "label": "User",
+      "options": "User",
+      "search_index": 1
+    },
+    {
+      "fieldname": "section_break_qvyg",
+      "fieldtype": "Section Break"
+    },
+    {
+      "fieldname": "permitted_roles",
+      "fieldtype": "Table",
+      "label": "Permitted Roles",
+      "options": "PM Workflow Action Permitted Role",
+      "read_only": 1
+    }
+  ],
+  "links": [],
+  "modified": "2026-05-17 00:00:00",
+  "modified_by": "Administrator",
+  "module": "Permission Manager",
+  "name": "PM Workflow Action",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "delete": 1,
+      "read": 1,
+      "role": "Desk User"
+    }
+  ],
+  "row_format": "Dynamic",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "title_field": "reference_name",
+  "track_changes": 1
+}

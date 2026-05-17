@@ -1,244 +1,147 @@
 app_name = "permission_manager"
 app_title = "Permission Manager"
 app_publisher = "siva"
-app_description = "Permission Manager"
+app_description = (
+    "All-in-one Frappe permission and approval management: "
+    "multi-level HR approvals, PM Workflow engine, and visual Permission Studio."
+)
 app_email = "siva@enfono.com"
 app_license = "mit"
 
-# Apps
-# ------------------
+# ─── Required apps ────────────────────────────────────────────────────────────
+required_apps = ["frappe", "hrms"]
 
-# required_apps = []
+# ─── Apps screen entry ────────────────────────────────────────────────────────
+add_to_apps_screen = [
+    {
+        "name": "permission_manager",
+        "logo": "/assets/permission_manager/images/logo.svg",
+        "title": "Permission Manager",
+        "route": "/app/permission-studio",
+    },
+    {
+        "name": "pm_demo",
+        "logo": "/assets/permission_manager/images/logo.svg",
+        "title": "PM Workflow Demo",
+        "route": "/app/pm-demo",
+    },
+]
 
-# Each item in the list will be shown as an app in the apps page
-# add_to_apps_screen = [
-# 	{
-# 		"name": "permission_manager",
-# 		"logo": "/assets/permission_manager/logo.png",
-# 		"title": "Permission Manager",
-# 		"route": "/permission_manager",
-# 		"has_permission": "permission_manager.api.permission.has_app_permission"
-# 	}
-# ]
+# ─── Desk-wide JS / CSS bundles ───────────────────────────────────────────────
+app_include_js = [
+    "/assets/permission_manager/js/pm_workflow.js",
+    "permission_manager.bundle.js",
+]
+app_include_css = ["permission_manager.bundle.css"]
 
-# Includes in <head>
-# ------------------
+# ─── Doctype-specific JS overrides ───────────────────────────────────────────
+doctype_js = {
+    "Leave Application": "public/js/leave_application.js",
+    "Expense Claim": "public/js/expense_claim.js",
+}
 
-# include js, css files in header of desk.html
-# app_include_css = "/assets/permission_manager/css/permission_manager.css"
-# app_include_js = "/assets/permission_manager/js/permission_manager.js"
+# ─── Fixtures ─────────────────────────────────────────────────────────────────
+fixtures = [
+    {
+        "doctype": "Custom Field",
+        "filters": [
+            [
+                "name",
+                "in",
+                [
+                    "Leave Application-custom_previous_approvers",
+                    "Expense Claim-custom_previously_approved_by",
+                    "Leave Application-custom_rejection_reason",
+                    "Expense Claim-custom_rejection_reason",
+                    "HR Settings-enable_multi_level_leave_approval",
+                    "HR Settings-enable_multi_level_expense_claim_approval",
+                    "Employee-custom_disable_multilevel_approval",
+                    "Employee-pm_approval_section",
+                    "Employee-pm_approval_chain",
+                    "Employee-pm_leave_substitute",
+                ],
+            ]
+        ],
+    },
+    {
+        "doctype": "Property Setter",
+        "filters": [
+            [
+                "name",
+                "in",
+                [
+                    "Leave Application-status-options",
+                    "Expense Claim-status-options",
+                    "Expense Claim-employee-ignore_user_permissions",
+                    "Leave Application-employee-ignore_user_permissions",
+                ],
+            ]
+        ],
+    },
+    {
+        "doctype": "Notification",
+        "filters": [
+            [
+                "name",
+                "in",
+                [
+                    "Leave Application",
+                    "Leave Application Rejected",
+                    "Leave Application Approved",
+                    "Expense Claim",
+                    "Expense Claim Rejected",
+                    "Expense Claim Approved",
+                ],
+            ]
+        ],
+    },
+]
 
-# include js, css files in header of web template
-# web_include_css = "/assets/permission_manager/css/permission_manager.css"
-# web_include_js = "/assets/permission_manager/js/permission_manager.js"
+# ─── Permission query conditions ──────────────────────────────────────────────
+permission_query_conditions = {
+    "Leave Application": "permission_manager.permission_manager.ladder_approve.leave_application.api.leave_application_permission_query",
+    "Expense Claim": "permission_manager.permission_manager.ladder_approve.expense_claim.api.expense_claim_permission_query",
+    "PM Workflow Action": "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.get_permission_query_conditions",
+}
 
-# include custom scss in every website theme (without file extension ".scss")
-# website_theme_scss = "permission_manager/public/scss/website"
+has_permission = {
+    "PM Workflow Action": "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.has_permission",
+}
 
-# include js, css files in header of web form
-# webform_include_js = {"doctype": "public/js/doctype.js"}
-# webform_include_css = {"doctype": "public/css/doctype.css"}
+# ─── Document event hooks ─────────────────────────────────────────────────────
+doc_events = {
+    # Multi-level Leave Approval
+    "Leave Application": {
+        "before_save": "permission_manager.permission_manager.ladder_approve.leave_application.api.before_save",
+        "before_submit": "permission_manager.permission_manager.ladder_approve.leave_application.api.before_submit",
+        "on_update": "permission_manager.permission_manager.ladder_approve.utils.after_save",
+    },
+    # Multi-level Expense Claim Approval
+    "Expense Claim": {
+        "before_save": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
+        "before_submit": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_submit",
+    },
+    # PM Workflow engine — fires on every doctype
+    "*": {
+        "on_update": [
+            "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.process_workflow_actions",
+        ],
+        "on_cancel": [
+            "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.process_workflow_actions",
+        ],
+        "on_trash": [
+            "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.process_workflow_actions",
+        ],
+        "on_update_after_submit": [
+            "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.process_workflow_actions",
+        ],
+    },
+}
 
-# include js in page
-# page_js = {"page" : "public/js/file.js"}
+# ─── Accounting dimensions ────────────────────────────────────────────────────
+accounting_dimension_doctypes = ["PM Workflow"]
 
-# include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
-# doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
-
-# Svg Icons
-# ------------------
-# include app icons in desk
-# app_include_icons = "permission_manager/public/icons.svg"
-
-# Home Pages
-# ----------
-
-# application home page (will override Website Settings)
-# home_page = "login"
-
-# website user home page (by Role)
-# role_home_page = {
-# 	"Role": "home_page"
-# }
-
-# Generators
-# ----------
-
-# automatically create page for each record of this doctype
-# website_generators = ["Web Page"]
-
-# Jinja
-# ----------
-
-# add methods and filters to jinja environment
-# jinja = {
-# 	"methods": "permission_manager.utils.jinja_methods",
-# 	"filters": "permission_manager.utils.jinja_filters"
-# }
-
-# Installation
-# ------------
-
-# before_install = "permission_manager.install.before_install"
-# after_install = "permission_manager.install.after_install"
-
-# Uninstallation
-# ------------
-
-# before_uninstall = "permission_manager.uninstall.before_uninstall"
-# after_uninstall = "permission_manager.uninstall.after_uninstall"
-
-# Integration Setup
-# ------------------
-# To set up dependencies/integrations with other apps
-# Name of the app being installed is passed as an argument
-
-# before_app_install = "permission_manager.utils.before_app_install"
-# after_app_install = "permission_manager.utils.after_app_install"
-
-# Integration Cleanup
-# -------------------
-# To clean up dependencies/integrations with other apps
-# Name of the app being uninstalled is passed as an argument
-
-# before_app_uninstall = "permission_manager.utils.before_app_uninstall"
-# after_app_uninstall = "permission_manager.utils.after_app_uninstall"
-
-# Desk Notifications
-# ------------------
-# See frappe.core.notifications.get_notification_config
-
-# notification_config = "permission_manager.notifications.get_notification_config"
-
-# Permissions
-# -----------
-# Permissions evaluated in scripted ways
-
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
-
-# DocType Class
-# ---------------
-# Override standard doctype classes
-
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
-
-# Document Events
-# ---------------
-# Hook on document methods and events
-
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
-
-# Scheduled Tasks
-# ---------------
-
-# scheduler_events = {
-# 	"all": [
-# 		"permission_manager.tasks.all"
-# 	],
-# 	"daily": [
-# 		"permission_manager.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"permission_manager.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"permission_manager.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"permission_manager.tasks.monthly"
-# 	],
-# }
-
-# Testing
-# -------
-
-# before_tests = "permission_manager.install.before_tests"
-
-# Overriding Methods
-# ------------------------------
-#
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "permission_manager.event.get_events"
-# }
-#
-# each overriding function accepts a `data` argument;
-# generated from the base implementation of the doctype dashboard,
-# along with any modifications made in other Frappe apps
-# override_doctype_dashboards = {
-# 	"Task": "permission_manager.task.get_dashboard_data"
-# }
-
-# exempt linked doctypes from being automatically cancelled
-#
-# auto_cancel_exempted_doctypes = ["Auto Repeat"]
-
-# Ignore links to specified DocTypes when deleting documents
-# -----------------------------------------------------------
-
-# ignore_links_on_delete = ["Communication", "ToDo"]
-
-# Request Events
-# ----------------
-# before_request = ["permission_manager.utils.before_request"]
-# after_request = ["permission_manager.utils.after_request"]
-
-# Job Events
-# ----------
-# before_job = ["permission_manager.utils.before_job"]
-# after_job = ["permission_manager.utils.after_job"]
-
-# User Data Protection
-# --------------------
-
-# user_data_fields = [
-# 	{
-# 		"doctype": "{doctype_1}",
-# 		"filter_by": "{filter_by}",
-# 		"redact_fields": ["{field_1}", "{field_2}"],
-# 		"partial": 1,
-# 	},
-# 	{
-# 		"doctype": "{doctype_2}",
-# 		"filter_by": "{filter_by}",
-# 		"partial": 1,
-# 	},
-# 	{
-# 		"doctype": "{doctype_3}",
-# 		"strict": False,
-# 	},
-# 	{
-# 		"doctype": "{doctype_4}"
-# 	}
-# ]
-
-# Authentication and authorization
-# --------------------------------
-
-# auth_hooks = [
-# 	"permission_manager.auth.validate"
-# ]
-
-# Automatically update python controller files with type annotations for this app.
-# export_python_type_annotations = True
-
-# default_log_clearing_doctypes = {
-# 	"Logging DocType Name": 30  # days to retain logs
-# }
-
+# ─── After migrate — sync pages that bench migrate skips ─────────────────────
+after_migrate = [
+    "permission_manager.permission_manager.install.sync_pages",
+]

@@ -1,0 +1,15 @@
+.pm-demo-wrap .pm-demo-card:hover {
+	box-shadow: 0 2px 8px rgba(0,0,0,.07);
+}
+
+.pm-demo-wrap .pm-steps > div > div:last-child {
+	transition: box-shadow .15s;
+}
+
+.pm-demo-wrap .pm-steps > div > div:last-child:hover {
+	box-shadow: 0 2px 8px rgba(0,0,0,.07);
+}
+
+.pm-demo-wrap .pm-log-items div {
+	padding: 1px 0;
+}

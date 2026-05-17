@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "creation": "2026-05-17 00:00:00",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "level",
+  "approver",
+  "approver_name",
+  "column_break_1",
+  "applies_to",
+  "module",
+  "document_type_name"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "level",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Level",
+   "reqd": 1,
+   "description": "1=first approver, 2=second, etc."
+  },
+  {
+   "columns": 3,
+   "fieldname": "approver",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Approver (User)",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "columns": 3,
+   "fetch_from": "approver.full_name",
+   "fetch_if_empty": 1,
+   "fieldname": "approver_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Approver Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 2,
+   "default": "All DocTypes",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Scope",
+   "options": "All DocTypes\nSpecific Module\nSpecific DocType",
+   "reqd": 1,
+   "description": "Limit this approver to a specific scope. DocType-specific rules take priority."
+  },
+  {
+   "depends_on": "eval: doc.applies_to === 'Specific Module'",
+   "fieldname": "module",
+   "fieldtype": "Link",
+   "label": "Module",
+   "options": "Module Def",
+   "mandatory_depends_on": "eval: doc.applies_to === 'Specific Module'"
+  },
+  {
+   "depends_on": "eval: doc.applies_to === 'Specific DocType'",
+   "fieldname": "document_type_name",
+   "fieldtype": "Link",
+   "label": "DocType",
+   "options": "DocType",
+   "mandatory_depends_on": "eval: doc.applies_to === 'Specific DocType'"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-17 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Employee Approval Chain",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "level",
+ "sort_order": "ASC",
+ "states": []
+}

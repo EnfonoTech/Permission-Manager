@@ -1,0 +1,150 @@
+{
+ "actions": [],
+ "autoname": "PM-DEL-.####",
+ "creation": "2026-05-17 00:00:00",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "original_approver",
+  "substitute_approver",
+  "column_break_1",
+  "from_date",
+  "to_date",
+  "is_active",
+  "scope_section",
+  "scope",
+  "module",
+  "document_type_name",
+  "details_section",
+  "reason",
+  "delegated_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "original_approver",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Original Approver",
+   "options": "User",
+   "reqd": 1,
+   "description": "The person who is unavailable"
+  },
+  {
+   "fieldname": "substitute_approver",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Substitute Approver",
+   "options": "User",
+   "reqd": 1,
+   "description": "Who covers their approvals during the period"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "from_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "To Date",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Active"
+  },
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "default": "All DocTypes",
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "label": "Scope",
+   "options": "All DocTypes\nSpecific Module\nSpecific DocType",
+   "reqd": 1,
+   "description": "Limit delegation to a specific scope or apply globally"
+  },
+  {
+   "depends_on": "eval: doc.scope === 'Specific Module'",
+   "fieldname": "module",
+   "fieldtype": "Link",
+   "label": "Module",
+   "options": "Module Def",
+   "mandatory_depends_on": "eval: doc.scope === 'Specific Module'"
+  },
+  {
+   "depends_on": "eval: doc.scope === 'Specific DocType'",
+   "fieldname": "document_type_name",
+   "fieldtype": "Link",
+   "label": "DocType",
+   "options": "DocType",
+   "mandatory_depends_on": "eval: doc.scope === 'Specific DocType'"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "description": "e.g. Annual Leave, Business Travel, Medical Leave"
+  },
+  {
+   "fieldname": "delegated_by",
+   "fieldtype": "Link",
+   "label": "Delegated By",
+   "options": "User",
+   "default": "__user"
+  }
+ ],
+ "links": [],
+ "modified": "2026-05-17 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Approver Delegation",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "write": 1,
+   "delete": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "search_fields": "original_approver,substitute_approver",
+ "sort_field": "from_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "original_approver",
+ "track_changes": 1
+}
