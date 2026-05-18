@@ -34,9 +34,8 @@
    "in_list_view": 1,
    "label": "State",
    "options": "Workflow State",
-   "print_width": "200px",
    "reqd": 1,
-   "width": "200px"
+   "width": "140px"
   },
   {
    "fieldname": "action",
@@ -44,9 +43,8 @@
    "in_list_view": 1,
    "label": "Action",
    "options": "Workflow Action Master",
-   "print_width": "200px",
    "reqd": 1,
-   "width": "200px"
+   "width": "140px"
   },
   {
    "fieldname": "next_state",
@@ -54,9 +52,8 @@
    "in_list_view": 1,
    "label": "Next State",
    "options": "Workflow State",
-   "print_width": "200px",
    "reqd": 1,
-   "width": "200px"
+   "width": "140px"
   },
   {
    "default": "0",
@@ -88,7 +85,8 @@
    "label": "Approver Type",
    "link_filters": "[[\"DocType\",\"name\",\"in\",[\"Role\",\"User\"]]]",
    "options": "DocType",
-   "mandatory_depends_on": "eval: !doc.use_approver_matrix"
+   "mandatory_depends_on": "eval: !doc.use_approver_matrix",
+   "width": "80px"
   },
   {
    "depends_on": "eval: !doc.use_approver_matrix",
@@ -97,9 +95,8 @@
    "in_list_view": 1,
    "label": "Approver",
    "options": "approver_type",
-   "print_width": "200px",
    "mandatory_depends_on": "eval: !doc.use_approver_matrix",
-   "width": "200px"
+   "width": "130px"
   },
   {
    "depends_on": "eval: doc.approver_type == \"Role\" && !doc.use_approver_matrix",
@@ -127,7 +124,8 @@
    "fieldname": "use_approver_matrix",
    "fieldtype": "Check",
    "in_list_view": 1,
-   "label": "Use Employee Approver Matrix"
+   "label": "Use Employee Approver Matrix",
+   "width": "60px"
   },
   {
    "default": "1",
@@ -135,7 +133,9 @@
    "description": "Which level to look up in the employee's PM Approval Chain (1 = first approver, 2 = second, etc.)",
    "fieldname": "matrix_level",
    "fieldtype": "Int",
-   "label": "Approval Level"
+   "label": "Level",
+   "width": "50px",
+   "in_list_view": 1
   },
   {
    "depends_on": "eval: doc.use_approver_matrix",

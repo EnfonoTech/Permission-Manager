@@ -40,6 +40,41 @@ $(document).on("form-refresh", function (event, frm) {
 	}
 });
 
+// ─── Mandatory field check (Frappe v13 compat + v14/v15 fallback) ─────────────
+
+function _check_mandatory(frm) {
+	const skip_types = ["Section Break", "Column Break", "Tab Break", "HTML", "Heading", "Fold", "Button"];
+	const skip_fields = ["name", "owner", "modified_by", "creation", "modified", "docstatus", "idx"];
+	const missing = [];
+
+	(frm.fields || []).forEach((f) => {
+		const df = f && f.df;
+		if (!df || !df.reqd) return;
+		if (skip_types.includes(df.fieldtype)) return;
+		if (skip_fields.includes(df.fieldname)) return;
+		if (df.hidden || df.read_only) return;
+		// Skip fields whose display status is None (hidden by depends_on)
+		if (f.disp_status === "None") return;
+
+		const val = frm.doc[df.fieldname];
+		if (val === undefined || val === null || val === "") {
+			missing.push(__(df.label || df.fieldname));
+		}
+	});
+
+	if (missing.length) {
+		frappe.msgprint({
+			title: __("Mandatory Fields Required"),
+			message:
+				__("Please fill in the following required fields:") +
+				"<br><ul><li>" + missing.join("</li><li>") + "</li></ul>",
+			indicator: "red",
+		});
+		return false;
+	}
+	return true;
+}
+
 // ─── Load transitions ─────────────────────────────────────────────────────────
 
 function _load_allowed_transitions(frm, workflow, current_state) {
@@ -54,12 +89,12 @@ function _load_allowed_transitions(frm, workflow, current_state) {
 			transitions.forEach((t) => {
 				frm.page.add_action_item(__(t.action), function () {
 					frm.selected_workflow_action = t.action;
-					if (!frappe.ui.form.check_mandatory(frm)) return;
+					if (!_check_mandatory(frm)) return;
 					_open_comment_dialog(frm, t);
 				});
 			});
 
-			_add_workflow_help_action(frm, transitions);
+			_add_workflow_help_action(frm, transitions, current_state);
 		},
 	});
 }
@@ -96,13 +131,13 @@ function _load_pending_approver_info(frm) {
 			}
 
 			// Show Reassign button only to System Managers / HR Managers
-			frappe.user.has_role(["System Manager", "HR Manager"]).then((has_role) => {
-				if (!has_role) return;
+			// frappe.user.has_role() is synchronous — returns true or undefined
+			if (frappe.user.has_role(["System Manager", "HR Manager"])) {
 				frm.remove_custom_button(__("Reassign Approver"));
 				frm.add_custom_button(__("Reassign Approver"), () => {
 					_show_reassign_dialog(frm, action);
 				}, __("Workflow"));
-			});
+			}
 		},
 	});
 }
@@ -165,11 +200,10 @@ function _show_reassign_dialog(frm, current_action) {
 
 // ─── Workflow help menu item ──────────────────────────────────────────────────
 
-function _add_workflow_help_action(frm, transitions) {
+function _add_workflow_help_action(frm, transitions, current_state) {
 	try {
 		frm.page.add_action_item(__("Workflow Help"), function () {
-			const state_field = frappe.workflow.get_state_fieldname(frm.doctype);
-			const current_state = frm.doc[state_field] || __("Unknown");
+			const state = current_state || __("Unknown");
 			const next_actions = transitions.length
 				? transitions.map((d) => `${d.action.bold()} (${d.allowed || __("matrix")})`).join(", ")
 				: __("None — End of Workflow").bold();
@@ -181,7 +215,7 @@ function _add_workflow_help_action(frm, transitions) {
 						fieldtype: "HTML",
 						fieldname: "info",
 						options: `
-							<p>${__("Current status")}: ${current_state.bold()}</p>
+							<p>${__("Current status")}: ${state.bold()}</p>
 							<p>${__("Next actions")}: ${next_actions}</p>
 							<p>${__("Only authorised users can perform these transitions.")}</p>
 						`,

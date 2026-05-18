@@ -15,8 +15,14 @@ class PMWorkflow(Document):
         self.validate_unique_active_combination()
 
     def on_update(self):
+        from ...workflow import clear_workflow_doctype_cache
+        clear_workflow_doctype_cache()
         self.create_custom_field_for_workflow_state()
         self.update_default_workflow_status()
+
+    def on_trash(self):
+        from ...workflow import clear_workflow_doctype_cache
+        clear_workflow_doctype_cache()
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 

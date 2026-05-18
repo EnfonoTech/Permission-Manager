@@ -9,7 +9,7 @@ app_email = "siva@enfono.com"
 app_license = "mit"
 
 # ─── Required apps ────────────────────────────────────────────────────────────
-required_apps = ["frappe", "hrms"]
+required_apps = ["frappe", "erpnext"]
 
 # ─── Apps screen entry ────────────────────────────────────────────────────────
 add_to_apps_screen = [
@@ -37,7 +37,7 @@ app_include_css = ["permission_manager.bundle.css"]
 # ─── Doctype-specific JS overrides ───────────────────────────────────────────
 doctype_js = {
     "Leave Application": "public/js/leave_application.js",
-    "Expense Claim": "public/js/expense_claim.js",
+    "Expense Claim":     "public/js/expense_claim.js",
 }
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -63,44 +63,12 @@ fixtures = [
             ]
         ],
     },
-    {
-        "doctype": "Property Setter",
-        "filters": [
-            [
-                "name",
-                "in",
-                [
-                    "Leave Application-status-options",
-                    "Expense Claim-status-options",
-                    "Expense Claim-employee-ignore_user_permissions",
-                    "Leave Application-employee-ignore_user_permissions",
-                ],
-            ]
-        ],
-    },
-    {
-        "doctype": "Notification",
-        "filters": [
-            [
-                "name",
-                "in",
-                [
-                    "Leave Application",
-                    "Leave Application Rejected",
-                    "Leave Application Approved",
-                    "Expense Claim",
-                    "Expense Claim Rejected",
-                    "Expense Claim Approved",
-                ],
-            ]
-        ],
-    },
 ]
 
 # ─── Permission query conditions ──────────────────────────────────────────────
 permission_query_conditions = {
     "Leave Application": "permission_manager.permission_manager.ladder_approve.leave_application.api.leave_application_permission_query",
-    "Expense Claim": "permission_manager.permission_manager.ladder_approve.expense_claim.api.expense_claim_permission_query",
+    "Expense Claim":     "permission_manager.permission_manager.ladder_approve.expense_claim.api.expense_claim_permission_query",
     "PM Workflow Action": "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.get_permission_query_conditions",
 }
 
@@ -112,13 +80,13 @@ has_permission = {
 doc_events = {
     # Multi-level Leave Approval
     "Leave Application": {
-        "before_save": "permission_manager.permission_manager.ladder_approve.leave_application.api.before_save",
+        "before_save":   "permission_manager.permission_manager.ladder_approve.leave_application.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.leave_application.api.before_submit",
-        "on_update": "permission_manager.permission_manager.ladder_approve.utils.after_save",
+        "on_update":     "permission_manager.permission_manager.ladder_approve.utils.after_save",
     },
     # Multi-level Expense Claim Approval
     "Expense Claim": {
-        "before_save": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
+        "before_save":   "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_submit",
     },
     # PM Workflow engine — fires on every doctype

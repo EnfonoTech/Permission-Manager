@@ -94,6 +94,11 @@ class PermissionStudio {
 				<div class="ps-search-field" id="ps-user-select"></div>
 				<div class="ps-search-field" id="ps-module-filter"></div>
 				<div class="ps-search-field" id="ps-dt-search"></div>
+				<div class="ps-quick-tools-wrap" style="display:none;flex:0 0 auto;align-self:flex-end;">
+					<button class="btn btn-sm btn-default ps-quick-tools-btn">
+						⚡ ${__("Quick Tools")}
+					</button>
+				</div>
 			</div>
 		`);
 
@@ -121,16 +126,19 @@ class PermissionStudio {
 		});
 
 		this.search_field = frappe.ui.form.make_control({
-			df: { fieldtype: "Data", fieldname: "dt_search", placeholder: __("Filter DocTypes…"), label: __("Search") },
+			df: {
+				fieldtype: "Link",
+				options: "DocType",
+				fieldname: "dt_search",
+				placeholder: __("Filter by DocType…"),
+				label: __("Search"),
+				change: () => this._apply_dt_filter(),
+			},
 			parent: this.$search.find("#ps-dt-search"),
 			render_input: true,
 		});
-		this.search_field.$input.on("input", () => {
-			const q = (this.search_field.get_value() || "").toLowerCase();
-			this.$content.find(".ps-matrix-row").each(function () {
-				$(this).toggle(($(this).data("doctype") || "").toLowerCase().includes(q));
-			});
-		});
+		// Also filter on raw keystroke for partial matches before a value is picked
+		this.search_field.$input?.on("input", () => this._apply_dt_filter());
 
 		this.$content.html(this._welcome_html(
 			frappe.utils.icon("users", "lg"),
@@ -227,6 +235,13 @@ class PermissionStudio {
 
 	// ── Data loaders ──────────────────────────────────────────────────────────
 
+	_apply_dt_filter() {
+		const q = (this.search_field?.get_value() || "").toLowerCase();
+		this.$content.find(".ps-matrix-row").each(function () {
+			$(this).toggle(!q || ($(this).data("doctype") || "").toLowerCase().includes(q));
+		});
+	}
+
 	load_user_matrix(user) {
 		this.$content.html(this._show_skeleton(8));
 		const module = this.module_field?.get_value() || null;
@@ -236,6 +251,11 @@ class PermissionStudio {
 			args: { user, module },
 			callback: (r) => {
 				if (r.message) {
+					// Show Quick Tools button now that a user is loaded
+					this.$search.find(".ps-quick-tools-wrap").show();
+					this.$search.find(".ps-quick-tools-btn").off("click").on("click", () => {
+						this._show_quick_tools_dialog(user);
+					});
 					this.components.matrix = new MatrixView({
 						wrapper:               this.$content,
 						data:                  r.message,
@@ -305,6 +325,259 @@ class PermissionStudio {
 				);
 			},
 		});
+	}
+
+	// ── Quick Tools ───────────────────────────────────────────────────────────
+
+	_show_quick_tools_dialog(user) {
+		const dlg = new frappe.ui.Dialog({
+			title: __("Quick Tools — {0}", [user]),
+			size: "large",
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "tools_html",
+				},
+			],
+		});
+
+		const $w = dlg.fields_dict.tools_html.$wrapper;
+		$w.html(`<div class="ps-loading">${__("Loading…")}</div>`);
+
+		// Load roles + issues in parallel
+		Promise.all([
+			new Promise((res) => frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.get_user_roles",
+				args: { user },
+				callback: (r) => res(r.message || []),
+			})),
+			new Promise((res) => frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.find_user_issues",
+				args: { user },
+				callback: (r) => res(r.message || []),
+			})),
+		]).then(([roles, issues]) => {
+			this._render_quick_tools($w, dlg, user, roles, issues);
+		});
+
+		dlg.show();
+	}
+
+	_render_quick_tools($w, dlg, user, roles, issues) {
+		const severity_icon = { error: "🔴", warning: "🟡", info: "🔵" };
+
+		// ── Roles section ─────────────────────────────────────────────────────
+		const role_chips = roles.map((r) => `
+			<span class="ps-role-chip ${r.is_custom ? "ps-role-custom" : ""}">
+				${esc(r.role)}
+				${r.is_custom ? `<span title="${__("Custom role")}">★</span>` : ""}
+			</span>
+		`).join("");
+
+		// ── Issues section ────────────────────────────────────────────────────
+		const issue_rows = issues.length
+			? issues.map((issue) => `
+				<div class="ps-issue-row ps-issue-${issue.severity}">
+					<span class="ps-issue-icon">${severity_icon[issue.severity] || "ℹ️"}</span>
+					<div class="ps-issue-body">
+						<strong>${esc(issue.title)}</strong>
+						<div class="ps-issue-desc">${esc(issue.description)}</div>
+					</div>
+					${issue.fix_label ? `
+						<button class="btn btn-xs btn-warning ps-fix-btn"
+							data-fix="${esc(issue.fix_type)}"
+							data-fix-data='${JSON.stringify(issue.fix_data || {})}'
+							style="margin-left:auto;flex-shrink:0;">
+							${esc(issue.fix_label)}
+						</button>` : ""}
+				</div>
+			`).join("")
+			: `<div class="ps-issue-none">${__("✅ No issues found for this user.")}</div>`;
+
+		$w.html(`
+			<div class="ps-quick-tools">
+
+				<div class="ps-qt-section">
+					<div class="ps-qt-section-header">
+						<strong>${__("Current Roles")} (${roles.length})</strong>
+						<button class="btn btn-xs btn-primary ps-manage-roles-btn">${__("Manage Roles")}</button>
+					</div>
+					<div class="ps-role-chips">${role_chips || `<em>${__("No roles assigned.")}</em>`}</div>
+				</div>
+
+				<div class="ps-qt-section">
+					<div class="ps-qt-section-header">
+						<strong>${__("Permission Issues")} (${issues.length})</strong>
+						<button class="btn btn-xs btn-default ps-recheck-btn">${frappe.utils.icon("refresh", "xs")} ${__("Re-check")}</button>
+					</div>
+					<div class="ps-issues-list">${issue_rows}</div>
+				</div>
+
+				<div class="ps-qt-section">
+					<div class="ps-qt-section-header"><strong>${__("More Actions")}</strong></div>
+					<div style="display:flex;gap:8px;flex-wrap:wrap;">
+						<button class="btn btn-sm btn-default ps-copy-roles-btn">
+							${frappe.utils.icon("copy", "xs")} ${__("Copy Roles From User")}
+						</button>
+						<button class="btn btn-sm btn-default ps-clear-custom-btn">
+							${frappe.utils.icon("delete", "xs")} ${__("Clear All Custom Perms")}
+						</button>
+					</div>
+				</div>
+
+			</div>
+		`);
+
+		// Manage Roles
+		$w.find(".ps-manage-roles-btn").on("click", () => {
+			dlg.hide();
+			this._show_manage_roles_dialog(user, roles);
+		});
+
+		// Re-check issues
+		$w.find(".ps-recheck-btn").on("click", () => {
+			$w.html(`<div class="ps-loading">${__("Checking…")}</div>`);
+			frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.find_user_issues",
+				args: { user },
+				callback: (r) => this._render_quick_tools($w, dlg, user, roles, r.message || []),
+			});
+		});
+
+		// Apply quick fix buttons
+		$w.find(".ps-fix-btn").on("click", (e) => {
+			const fix_type = $(e.currentTarget).data("fix");
+			const fix_data = JSON.parse($(e.currentTarget).attr("data-fix-data") || "{}");
+			frappe.dom.freeze(__("Applying fix…"));
+			frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.apply_quick_fix",
+				args: { user, fix_type, fix_data: JSON.stringify(fix_data) },
+				callback: (r) => {
+					frappe.dom.unfreeze();
+					frappe.show_alert({ message: r.message?.msg || __("Fix applied."), indicator: "green" });
+					// Re-check issues
+					frappe.call({
+						method: "permission_manager.permission_manager.api.quickfix.find_user_issues",
+						args: { user },
+						callback: (r2) => this._render_quick_tools($w, dlg, user, roles, r2.message || []),
+					});
+				},
+				error: () => frappe.dom.unfreeze(),
+			});
+		});
+
+		// Copy Roles From User
+		$w.find(".ps-copy-roles-btn").on("click", () => {
+			frappe.prompt(
+				{ fieldtype: "Link", options: "User", fieldname: "source_user", label: __("Copy Roles From"), reqd: 1 },
+				(vals) => {
+					frappe.dom.freeze(__("Copying roles…"));
+					frappe.call({
+						method: "permission_manager.permission_manager.api.quickfix.copy_roles_from_user",
+						args: { target_user: user, source_user: vals.source_user },
+						callback: (r) => {
+							frappe.dom.unfreeze();
+							frappe.show_alert({ message: r.message?.msg || __("Roles copied."), indicator: "green" });
+							dlg.hide();
+							this.load_user_matrix(user);
+						},
+						error: () => frappe.dom.unfreeze(),
+					});
+				},
+				__("Copy Roles From User"), __("Copy")
+			);
+		});
+
+		// Clear All Custom Perms
+		$w.find(".ps-clear-custom-btn").on("click", () => {
+			frappe.confirm(
+				__("Remove all Custom DocPerms for <b>{0}</b>? This resets them to standard role-based permissions.", [user]),
+				() => {
+					frappe.dom.freeze(__("Clearing…"));
+					frappe.call({
+						method: "permission_manager.permission_manager.api.quickfix.clear_custom_perms_for_user",
+						args: { user },
+						callback: (r) => {
+							frappe.dom.unfreeze();
+							frappe.show_alert({ message: r.message?.msg || __("Done."), indicator: "green" });
+							dlg.hide();
+							this.load_user_matrix(user);
+						},
+						error: () => frappe.dom.unfreeze(),
+					});
+				}
+			);
+		});
+	}
+
+	_show_manage_roles_dialog(user, current_roles) {
+		const current_role_names = new Set(current_roles.map((r) => r.role));
+
+		const dlg = new frappe.ui.Dialog({
+			title: __("Manage Roles — {0}", [user]),
+			fields: [
+				{
+					fieldtype: "Link",
+					fieldname: "add_role",
+					options: "Role",
+					label: __("Add Role"),
+					description: __("Type and select a role to add"),
+				},
+				{
+					fieldtype: "HTML",
+					fieldname: "current_roles_html",
+				},
+			],
+			primary_action_label: __("Close"),
+			primary_action: () => dlg.hide(),
+		});
+
+		const _refresh_roles = () => {
+			const $html = dlg.fields_dict.current_roles_html.$wrapper;
+			const rows = [...current_role_names].sort().map((role) => `
+				<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f1f3f5;">
+					<span style="flex:1;">${esc(role)}</span>
+					<button class="btn btn-xs btn-danger ps-remove-role-btn" data-role="${esc(role)}">
+						${frappe.utils.icon("delete", "xs")} ${__("Remove")}
+					</button>
+				</div>
+			`).join("");
+			$html.html(rows || `<em>${__("No roles assigned.")}</em>`);
+			$html.find(".ps-remove-role-btn").on("click", (e) => {
+				const role = $(e.currentTarget).data("role");
+				frappe.call({
+					method: "permission_manager.permission_manager.api.quickfix.update_user_roles",
+					args: { user, add_roles: "[]", remove_roles: JSON.stringify([role]) },
+					callback: (r) => {
+						if (r.message?.success) {
+							current_role_names.delete(role);
+							_refresh_roles();
+							frappe.show_alert({ message: __("Role removed."), indicator: "orange" });
+						}
+					},
+				});
+			});
+		};
+
+		dlg.fields_dict.add_role.df.change = () => {
+			const role = dlg.get_value("add_role");
+			if (!role || current_role_names.has(role)) return;
+			frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.update_user_roles",
+				args: { user, add_roles: JSON.stringify([role]), remove_roles: "[]" },
+				callback: (r) => {
+					if (r.message?.success) {
+						current_role_names.add(role);
+						dlg.set_value("add_role", "");
+						_refresh_roles();
+						frappe.show_alert({ message: __("Role added."), indicator: "green" });
+					}
+				},
+			});
+		};
+
+		_refresh_roles();
+		dlg.show();
 	}
 
 	// ── DocType Edit Dialog (User View shortcut) ──────────────────────────────

@@ -147,7 +147,34 @@ def setup_demo():
                 frappe.get_doc({"doctype": "Workflow Action Master", **wa}).insert(ignore_permissions=True)
                 log.append(f"Created Workflow Action: {aname}")
 
-        # 7. Custom Field: workflow_state on Note
+        # 7. Note DocPerm — ensure Desk User has read+write+create on Note without if_owner restriction
+        _NOTE_PERM_ROLE = "Desk User"
+        # Check specifically for a row that has write=1 and if_owner=0 (unrestricted write)
+        unrestricted_write = frappe.db.get_value(
+            "Custom DocPerm",
+            {"parent": "Note", "role": _NOTE_PERM_ROLE, "permlevel": 0, "if_owner": 0, "write": 1},
+            "name",
+        )
+        if not unrestricted_write:
+            frappe.get_doc({
+                "doctype": "Custom DocPerm",
+                "parent": "Note",
+                "parenttype": "DocType",
+                "parentfield": "permissions",
+                "role": _NOTE_PERM_ROLE,
+                "permlevel": 0,
+                "read": 1,
+                "write": 1,
+                "create": 1,
+                "delete": 1,
+                "if_owner": 0,
+            }).insert(ignore_permissions=True)
+            frappe.clear_cache(doctype="Note")
+            log.append(f"Granted Note write permissions to role: {_NOTE_PERM_ROLE}")
+        else:
+            log.append(f"Note write permissions already set for: {_NOTE_PERM_ROLE}")
+
+        # 8. Custom Field: workflow_state on Note
         if not frappe.db.exists("Custom Field", _CF_NAME):
             frappe.get_doc({
                 "doctype": "Custom Field",
@@ -228,6 +255,16 @@ def setup_demo():
                         "allow_self_approval": 0,
                         "require_comment": 1,
                     },
+                    # Re-submit after rejection
+                    {
+                        "state": "PM Demo Rejected",
+                        "action": "PM Demo Submit",
+                        "next_state": "PM Demo Pending L1",
+                        "approver_type": "Role",
+                        "allowed": "Desk User",
+                        "allow_self_approval": 1,
+                        "use_approver_matrix": 0,
+                    },
                 ],
             }).insert(ignore_permissions=True)
             log.append(f"Created PM Workflow: {_WF_NAME}")
@@ -253,6 +290,7 @@ def setup_demo():
         if not frappe.db.get_value("Note", {"title": _NOTE_TITLE}, "name"):
             note_doc = frappe.get_doc({
                 "doctype": "Note",
+                "owner": _SUBMITTER,
                 "title": _NOTE_TITLE,
                 "content": (
                     "<p>This is a demo Note used to showcase PM Workflow with Employee Approver Matrix.</p>"
@@ -268,6 +306,7 @@ def setup_demo():
                 "public": 0,
             })
             note_doc.insert(ignore_permissions=True)
+            frappe.db.set_value("Note", note_doc.name, "owner", _SUBMITTER)
             log.append(f"Created Sample Note: {note_doc.name} (title: {_NOTE_TITLE})")
 
         frappe.db.commit()
@@ -318,6 +357,15 @@ def teardown_demo():
         emp = frappe.db.get_value("Employee", {"user_id": _SUBMITTER}, "name")
         if emp:
             _del("Employee", emp)
+
+        # Remove Note DocPerm added for demo
+        note_perm = frappe.db.exists(
+            "Custom DocPerm", {"parent": "Note", "role": "Desk User", "permlevel": 0}
+        )
+        if note_perm:
+            frappe.delete_doc("Custom DocPerm", note_perm, ignore_permissions=True, force=True)
+            frappe.clear_cache(doctype="Note")
+            log.append("Removed Note permission for Desk User role")
 
         if frappe.db.exists("Custom Field", _CF_NAME):
             frappe.delete_doc("Custom Field", _CF_NAME, ignore_permissions=True, force=True)

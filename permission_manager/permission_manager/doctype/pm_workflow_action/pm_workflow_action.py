@@ -16,12 +16,15 @@ from frappe.utils.verified_command import get_signed_params, verify_request
 
 from ...workflow import (
     apply_workflow,
+    clear_workflow_doctype_cache,
     get_allowed_transitions_for_user,
     get_doc_workflow_state,
+    get_original_submitter,
     get_workflow_name,
     has_approval_access,
     is_transition_condition_satisfied,
     send_email_alert,
+    _get_active_workflow_doctypes,
 )
 
 
@@ -101,8 +104,19 @@ def process_workflow_actions(doc, state):
     on_update_after_submit).  Creates or closes PM Workflow Action records
     and optionally sends email alerts.
     """
-    # PM Workflow tables may not exist before bench migrate
+    # ── Guard 1: tables may not exist before first bench migrate ─────────────
     if not frappe.db.table_exists("PM Workflow"):
+        return
+
+    # ── Guard 2: zero-overhead exit for non-workflow doctypes ────────────────
+    # Checks a Redis-cached allow-list — no extra DB query for irrelevant saves.
+    doctype = doc.get("doctype")
+    if doctype not in _get_active_workflow_doctypes():
+        return
+
+    # ── Guard 3: skip if standard Frappe workflow owns this doctype ──────────
+    # Prevents double-processing; conflict is already blocked at PM Workflow save.
+    if frappe.db.exists("Workflow", {"document_type": doctype, "is_active": 1}):
         return
 
     workflow = get_workflow_name(doc.get("doctype"), doc.get("name"))
@@ -351,9 +365,17 @@ def _resolve_transition_assignments(transitions, doc, workflow_name):
     - Matrix transitions: assigned_to = resolved specific user
     - Role/User transitions: assigned_to = None (role-based routing)
     """
-    from ...workflow import resolve_approver
+    from ...workflow import resolve_approver, get_original_submitter
 
-    doc_owner = doc.get("owner")
+    # get_original_submitter reads for_submitter from existing PM Workflow Actions.
+    # On the FIRST transition no prior action exists, so it returns doc.owner.
+    # If doc.owner is Administrator (set by frappe when running via bench execute),
+    # fall back to frappe.session.user — the person who actually triggered the action.
+    doc_owner = get_original_submitter(doc)
+    if (not doc_owner or doc_owner == "Administrator") and \
+       frappe.session.user not in ("Administrator", "Guest"):
+        doc_owner = frappe.session.user
+
     doc_type = doc.get("doctype")
     assignments = []
     seen = set()

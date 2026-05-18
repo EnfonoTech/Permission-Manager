@@ -172,11 +172,12 @@ export class UserExplorer {
 					description: __("e.g. Company, Cost Center, Warehouse"),
 				},
 				{
-					fieldtype: "Data",
+					fieldtype: "Dynamic Link",
 					fieldname: "for_value",
 					label: __("Allowed Value"),
+					options: "allow",
 					reqd: 1,
-					description: __("The specific record the user is restricted to."),
+					description: __("Pick the specific record this user is restricted to."),
 				},
 				{
 					fieldtype: "Check",
@@ -278,8 +279,12 @@ export class UserExplorer {
 			_preview_timer = setTimeout(_run_preview, 600);
 		};
 
-		dlg.fields_dict.allow.df.change = _debounced_preview;
-		dlg.fields_dict.for_value.$input?.on("input", _debounced_preview);
+		dlg.fields_dict.allow.df.change = () => {
+			// Clear for_value when the DocType changes so stale values don't carry over
+			dlg.set_value("for_value", "");
+			_debounced_preview();
+		};
+		dlg.fields_dict.for_value.df.change = _debounced_preview;
 
 		dlg.show();
 	}

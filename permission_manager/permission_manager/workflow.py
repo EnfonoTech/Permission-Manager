@@ -21,6 +21,30 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 
+# ─── Doctype allow-list cache ─────────────────────────────────────────────────
+# Keeps a Redis-cached set of doctypes that have at least one active PM Workflow.
+# process_workflow_actions checks this first — if the doctype isn't in the set
+# the function returns immediately with zero additional DB queries.
+
+_CACHE_KEY = "pm_workflow_active_doctypes"
+_CACHE_TTL = 600  # 10 minutes; hard-invalidated on PM Workflow save/trash
+
+
+def _get_active_workflow_doctypes() -> set:
+    if not frappe.db.table_exists("PM Workflow"):
+        return set()
+    cached = frappe.cache().get_value(_CACHE_KEY)
+    if cached is not None:
+        return set(cached)
+    doctypes = frappe.get_all("PM Workflow", filters={"is_active": 1}, pluck="document_type")
+    frappe.cache().set_value(_CACHE_KEY, list(set(doctypes)), expires_in_sec=_CACHE_TTL)
+    return set(doctypes)
+
+
+def clear_workflow_doctype_cache():
+    frappe.cache().delete_value(_CACHE_KEY)
+
+
 # ─── State / field helpers ────────────────────────────────────────────────────
 
 def get_doc_workflow_state(doc):
@@ -117,6 +141,30 @@ def get_workflow(doctype: str, docname: str | int = None):
 # ═══════════════════════════════════════════════════════════════════════════════
 # EMPLOYEE APPROVER MATRIX — Resolution Engine
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def get_original_submitter(doc) -> str:
+    """
+    Return the user whose Employee Approval Chain should be used for matrix resolution.
+
+    Priority:
+      1. for_submitter on the most recent PM Workflow Action for this document
+         (carries the original submitter across multi-level approvals even after
+          the doc.owner gets overwritten by frappe.session.user during bench-execute setup)
+      2. doc.owner as fallback
+    """
+    if not frappe.db.table_exists("PM Workflow Action"):
+        return doc.get("owner") or ""
+    submitter = frappe.db.get_value(
+        "PM Workflow Action",
+        {
+            "reference_doctype": doc.get("doctype"),
+            "reference_name": doc.get("name"),
+        },
+        "for_submitter",
+        order_by="creation desc",
+    )
+    return submitter or doc.get("owner") or ""
+
 
 def resolve_approver(submitter_user: str, level: int, doctype: str = None, workflow_name: str = None) -> str | None:
     """
@@ -303,7 +351,7 @@ def get_allowed_transitions_for_user(
     user_roles = frappe.get_roles(user)
     allowed = []
 
-    doc_owner = doc.get("owner") if doc else None
+    doc_owner = get_original_submitter(doc) if doc else None
     doc_type = doc.get("doctype") if doc else None
 
     for t in transitions:
@@ -452,11 +500,15 @@ def reassign_workflow_approver(
 
     old_approver = frappe.db.get_value("PM Workflow Action", action_name, "assigned_to") or _("(role-based)")
 
-    # Update the action record
-    frappe.db.set_value("PM Workflow Action", action_name, {
-        "assigned_to": new_approver,
-        "status": "Open",
-    })
+    # Update the action — replace permitted_roles so the permission query
+    # only exposes the new approver (not the previous role holders).
+    action_doc = frappe.get_doc("PM Workflow Action", action_name)
+    action_doc.assigned_to = new_approver
+    action_doc.status = "Open"
+    action_doc.set("permitted_roles", [
+        {"approver_type": "User", "approver": new_approver}
+    ])
+    action_doc.save(ignore_permissions=True)
 
     # Add an audit comment on the document
     doc = frappe.get_doc(doctype, docname)
@@ -481,11 +533,15 @@ def reassign_workflow_approver(
                 f"<p>Dear {new_approver},</p>"
                 f"<p>An approval for <strong>{doctype}: {docname}</strong> has been reassigned to you by {frappe.session.user}.</p>"
                 + (f"<p>Reason: {reason}</p>" if reason else "")
-                + f"<p><a href='{frappe.utils.get_url()}/app/{frappe.router.slug(doctype)}/{docname}'>Open Document</a></p>"
+                + f"<p><a href='{frappe.utils.get_url()}/app/{frappe.utils.slug(doctype)}/{docname}'>Open Document</a></p>"
             ),
         )
     except Exception:
-        pass  # Email is best-effort; don't fail the reassignment
+        # Email is best-effort; log but don't block the reassignment
+        frappe.log_error(
+            title=f"PM Workflow: reassignment email failed for {doctype} {docname}",
+            message=frappe.get_traceback(),
+        )
 
     frappe.db.commit()
     return {

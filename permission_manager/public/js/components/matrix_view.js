@@ -8,13 +8,17 @@ import { MATRIX_RIGHTS, RIGHT_LABELS, RIGHT_FULL_LABELS, PERM_ICONS, esc } from 
 
 export class MatrixView {
 	constructor(opts) {
-		this.wrapper = opts.wrapper;
-		this.data = opts.data;
-		this.mode = opts.mode;                     // "user" | "doctype"
-		this.on_why_click = opts.on_why_click;
+		this.wrapper          = opts.wrapper;
+		this.data             = opts.data;
+		this.mode             = opts.mode;                   // "user" | "doctype"
+		this.on_why_click     = opts.on_why_click;
 		this.on_restrictions_click = opts.on_restrictions_click;
-		this.on_edit_doctype = opts.on_edit_doctype; // (doctype) → open doctype edit dialog
-		this._edit_mode = false;
+		this.on_edit_doctype  = opts.on_edit_doctype;
+		this.on_export        = opts.on_export;              // (type, id) → CSV download
+		this.on_simulate      = opts.on_simulate;            // (user) → simulate dialog
+		this.on_reload        = opts.on_reload;
+		this.on_bulk_apply    = opts.on_bulk_apply;
+		this._edit_mode       = false;
 		this.render();
 	}
 

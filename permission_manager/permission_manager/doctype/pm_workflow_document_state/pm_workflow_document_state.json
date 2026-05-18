@@ -46,7 +46,7 @@
    "label": "Doc Status",
    "options": "0\n1\n2",
    "print_width": "80px",
-   "width": "80px"
+   "width": "90px"
   },
   {
    "fieldname": "update_field",
