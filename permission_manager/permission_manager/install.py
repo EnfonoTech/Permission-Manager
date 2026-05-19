@@ -3,6 +3,41 @@ import json
 import os
 
 
+def after_install():
+    """Runs once after `bench install-app permission_manager`.
+
+    bench install-app creates DocType tables from JSON but does NOT
+    automatically run sync_fixtures, so Custom Field records would be
+    missing without this hook.
+    """
+    _sync_fixtures()
+    sync_pages()
+    frappe.db.commit()
+    print("Permission Manager: install complete — custom fields and pages synced.")
+
+
+def after_migrate():
+    """Runs after every `bench migrate`.
+
+    bench migrate calls sync_fixtures globally, but we also need to
+    sync pages (bench migrate skips Page JSON files after initial install).
+    """
+    sync_pages()
+    frappe.db.commit()
+
+
+def _sync_fixtures():
+    """Import this app's fixtures (Custom Fields, etc.) into the DB."""
+    try:
+        from frappe.utils.fixtures import sync_fixtures
+        sync_fixtures(app="permission_manager")
+        print("Permission Manager: fixtures synced via frappe.utils.fixtures.")
+    except Exception as e:
+        # Fallback: direct JSON import in case sync_fixtures API differs
+        frappe.log_error(f"sync_fixtures fallback triggered: {e}", "PM Install")
+        import_fixtures()
+
+
 def import_fixtures():
     fixture_path = os.path.join(
         frappe.get_app_path("permission_manager"),

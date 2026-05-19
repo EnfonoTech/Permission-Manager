@@ -109,7 +109,10 @@ doc_events = {
 # ─── Accounting dimensions ────────────────────────────────────────────────────
 accounting_dimension_doctypes = ["PM Workflow"]
 
+# ─── After install — create custom fields + sync pages ────────────────────────
+after_install = "permission_manager.permission_manager.install.after_install"
+
 # ─── After migrate — sync pages that bench migrate skips ─────────────────────
 after_migrate = [
-    "permission_manager.permission_manager.install.sync_pages",
+    "permission_manager.permission_manager.install.after_migrate",
 ]
