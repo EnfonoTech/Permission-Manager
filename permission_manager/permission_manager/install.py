@@ -17,11 +17,8 @@ def after_install():
 
 
 def after_migrate():
-    """Runs after every `bench migrate`.
-
-    bench migrate calls sync_fixtures globally, but we also need to
-    sync pages (bench migrate skips Page JSON files after initial install).
-    """
+    """Runs after every `bench migrate`."""
+    _sync_fixtures()
     sync_pages()
     frappe.db.commit()
 
