@@ -27,15 +27,10 @@ def after_migrate():
 
 
 def _sync_fixtures():
-    """Import this app's fixtures (Custom Fields, etc.) into the DB."""
-    try:
-        from frappe.utils.fixtures import sync_fixtures
-        sync_fixtures(app="permission_manager")
-        print("Permission Manager: fixtures synced via frappe.utils.fixtures.")
-    except Exception as e:
-        # Fallback: direct JSON import in case sync_fixtures API differs
-        frappe.log_error(f"sync_fixtures fallback triggered: {e}", "PM Install")
-        import_fixtures()
+    """Import custom fields per-record so a missing parent DocType (e.g. HRMS
+    not installed) only skips that specific record instead of aborting the
+    whole file the way frappe.utils.fixtures.sync_fixtures does."""
+    import_fixtures()
 
 
 def import_fixtures():
@@ -47,13 +42,19 @@ def import_fixtures():
     with open(fixture_path) as f:
         records = json.load(f)
 
-    created, updated, errors = [], [], []
+    created, updated, skipped, errors = [], [], [], []
     for rec in records:
+        parent_dt = rec.get("dt")
+        if parent_dt and not frappe.db.exists("DocType", parent_dt):
+            skipped.append(f"{parent_dt}-{rec.get('fieldname')} (DocType not installed)")
+            continue
         try:
             name = rec.get("name") or f"{rec['dt']}-{rec['fieldname']}"
             if frappe.db.exists("Custom Field", name):
                 doc = frappe.get_doc("Custom Field", name)
-                doc.update(rec)
+                # strip metadata so we don't overwrite modified/creation
+                _META = {"modified", "modified_by", "creation", "owner", "docstatus", "idx"}
+                doc.update({k: v for k, v in rec.items() if k not in _META})
                 doc.save(ignore_permissions=True)
                 updated.append(name)
             else:
@@ -70,6 +71,10 @@ def import_fixtures():
     print(f"Updated : {len(updated)}")
     for n in updated:
         print(f"  ~ {n}")
+    if skipped:
+        print(f"Skipped : {len(skipped)} (parent DocType not installed)")
+        for s in skipped:
+            print(f"  - {s}")
     if errors:
         print(f"Errors  : {len(errors)}")
         for e in errors:
