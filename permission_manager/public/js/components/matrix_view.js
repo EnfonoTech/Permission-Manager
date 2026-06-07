@@ -223,6 +223,19 @@ export class MatrixView {
 			return;
 		}
 
+		// ── Search bar ───────────────────────────────────────────────────────────
+		const $search_wrap = $(`
+			<div class="ps-re-search-wrap">
+				<span class="ps-re-search-icon">${frappe.utils.icon("search", "xs")}</span>
+				<input class="form-control ps-re-search"
+					placeholder="${__("Search roles…")}"
+					type="text" autocomplete="off"
+					value="${esc(this._search_query || "")}" />
+				${this._search_query ? `<button class="ps-re-search-clear btn-naked" title="${__("Clear")}">✕</button>` : ""}
+			</div>
+		`);
+		this.wrapper.append($search_wrap);
+
 		if (edit) {
 			this.wrapper.append($(`
 				<div class="ps-edit-hint">
@@ -314,6 +327,26 @@ export class MatrixView {
 
 		this.wrapper.append($table);
 		if (edit) this._render_add_role_row();
+
+		// Bind search after table is in DOM
+		const $search = this.wrapper.find(".ps-re-search");
+		const _apply = () => {
+			const q = (this._search_query || "").toLowerCase();
+			$table.find(".ps-matrix-row").each((_, row) => {
+				const role = ($(row).attr("data-role") || "").toLowerCase();
+				$(row).toggle(!q || role.includes(q));
+			});
+			this.wrapper.find(".ps-re-search-clear").toggle(!!q);
+		};
+		$search.on("input", () => {
+			this._search_query = $search.val().trim();
+			_apply();
+		});
+		this.wrapper.find(".ps-re-search-clear").on("click", () => {
+			this._search_query = "";
+			$search.val("").trigger("input");
+		});
+		if (this._search_query) _apply();
 	}
 
 	_render_add_role_row() {

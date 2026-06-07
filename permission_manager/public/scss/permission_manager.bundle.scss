@@ -371,6 +371,42 @@
 
 // ── Module groups (Role Explorer) ─────────────────────────────────────────────
 
+// ── Role Explorer search bar ──────────────────────────────────────────────────
+.ps-re-search-wrap {
+	position: relative;
+	margin-bottom: 14px;
+
+	.ps-re-search-icon {
+		position: absolute;
+		left: 10px;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--ps-text-muted);
+		pointer-events: none;
+	}
+
+	.ps-re-search {
+		padding-left: 32px;
+		padding-right: 32px;
+		font-size: 13px;
+	}
+
+	.ps-re-search-clear {
+		position: absolute;
+		right: 10px;
+		top: 50%;
+		transform: translateY(-50%);
+		font-size: 11px;
+		color: var(--ps-text-muted);
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 0;
+		line-height: 1;
+		&:hover { color: var(--ps-text); }
+	}
+}
+
 .ps-module-group {
 	margin-bottom: 24px;
 	border: 1px solid var(--ps-border);
