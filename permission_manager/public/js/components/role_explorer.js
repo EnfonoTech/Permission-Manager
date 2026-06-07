@@ -66,7 +66,9 @@ export class RoleExplorer {
 			`);
 
 			let html = `<table class="ps-matrix-table ps-matrix-compact">
-				<thead><tr><th class="ps-col-doctype">${__("DocType")}</th>`;
+				<thead><tr>
+					<th class="ps-col-doctype">${__("DocType")}</th>
+					<th class="ps-col-owner" title="${__("Only If Creator")}">Own</th>`;
 
 			MATRIX_RIGHTS.forEach((r) => {
 				html += `<th class="ps-col-perm" title="${RIGHT_FULL_LABELS[r] || r}">${RIGHT_LABELS[r]}</th>`;
@@ -77,9 +79,21 @@ export class RoleExplorer {
 				html += `<tr class="ps-matrix-row" data-doctype="${esc(row.doctype)}">`;
 				html += `<td class="ps-col-doctype">
 					<a href="/app/${frappe.router.slug(row.doctype)}" target="_blank">${esc(row.doctype)}</a>
-					${row.if_owner ? '<span class="ps-badge ps-badge-owner">if_owner</span>' : ""}
 					${row.source === "custom" ? '<span class="ps-badge ps-badge-custom ps-xs-badge">custom</span>' : ""}
 				</td>`;
+
+				// Owner (if_owner) column
+				if (this._edit_mode) {
+					html += `<td class="ps-col-owner ps-cell ps-cell-owner-edit ${row.if_owner ? "ps-owner-on" : ""}"
+						data-doctype="${esc(row.doctype)}" data-value="${row.if_owner ? 1 : 0}"
+						title="${__("Click to toggle Only If Creator")}">
+						${row.if_owner ? "✓" : "○"}
+					</td>`;
+				} else {
+					html += `<td class="ps-col-owner ps-cell">
+						${row.if_owner ? '<span class="ps-owner-badge" title="' + __("Only If Creator") + '">✓</span>' : ""}
+					</td>`;
+				}
 
 				MATRIX_RIGHTS.forEach((r) => {
 					const val = row.permissions[r];
@@ -107,6 +121,9 @@ export class RoleExplorer {
 			if (this._edit_mode) {
 				$group.find(".ps-cell-editable").on("click", (e) => {
 					this._toggle_cell($(e.currentTarget));
+				});
+				$group.find(".ps-cell-owner-edit").on("click", (e) => {
+					this._toggle_if_owner($(e.currentTarget));
 				});
 			}
 
@@ -166,6 +183,43 @@ export class RoleExplorer {
 				row.source = "custom";
 				break;
 			}
+		}
+	}
+
+	_toggle_if_owner($cell) {
+		const doctype  = $cell.data("doctype");
+		const new_val  = $cell.data("value") ? 0 : 1;
+		const role     = this.data.role;
+
+		$cell.addClass("ps-cell-saving");
+
+		frappe.call({
+			method: "permission_manager.permission_manager.api.matrix.update_if_owner",
+			args:   { doctype, role, permlevel: 0, value: new_val },
+			callback: (r) => {
+				$cell.removeClass("ps-cell-saving");
+				if (r.message?.success) {
+					$cell.data("value", new_val)
+						.toggleClass("ps-owner-on", !!new_val)
+						.text(new_val ? "✓" : "○");
+					this._update_local_if_owner(doctype, new_val);
+					frappe.show_alert({
+						message: `${doctype} — ${__("Only If Creator")}: ${new_val ? __("On") : __("Off")}`,
+						indicator: new_val ? "blue" : "orange",
+					});
+				}
+			},
+			error: () => {
+				$cell.removeClass("ps-cell-saving");
+				frappe.show_alert({ message: __("Failed to update owner flag."), indicator: "red" });
+			},
+		});
+	}
+
+	_update_local_if_owner(doctype, value) {
+		for (const mod of this.data.modules) {
+			const row = mod.doctypes.find((r) => r.doctype === doctype);
+			if (row) { row.if_owner = value; break; }
 		}
 	}
 }

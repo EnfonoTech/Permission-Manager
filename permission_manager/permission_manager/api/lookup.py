@@ -319,7 +319,8 @@ def bulk_apply_role_permissions(doctypes: str, role: str, permissions: str) -> d
     if not frappe.db.exists("Role", role):
         frappe.throw(_("Role '{0}' does not exist.").format(role))
 
-    invalid_ptypes = [p for p in perms_dict if p not in MATRIX_RIGHTS]
+    allowed_keys = set(MATRIX_RIGHTS) | {"if_owner"}
+    invalid_ptypes = [p for p in perms_dict if p not in allowed_keys]
     if invalid_ptypes:
         frappe.throw(_("Invalid permission types: {0}").format(", ".join(invalid_ptypes)))
 

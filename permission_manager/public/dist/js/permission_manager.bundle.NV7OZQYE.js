@@ -1,4 +1,24 @@
 (() => {
+  var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+
   // ../permission_manager/permission_manager/public/js/utils/helpers.js
   var MATRIX_RIGHTS = [
     "select",
@@ -913,7 +933,9 @@
 				</div>
 			`);
         let html = `<table class="ps-matrix-table ps-matrix-compact">
-				<thead><tr><th class="ps-col-doctype">${__("DocType")}</th>`;
+				<thead><tr>
+					<th class="ps-col-doctype">${__("DocType")}</th>
+					<th class="ps-col-owner" title="${__("Only If Creator")}">Own</th>`;
         MATRIX_RIGHTS.forEach((r) => {
           html += `<th class="ps-col-perm" title="${RIGHT_FULL_LABELS[r] || r}">${RIGHT_LABELS[r]}</th>`;
         });
@@ -922,9 +944,19 @@
           html += `<tr class="ps-matrix-row" data-doctype="${esc(row.doctype)}">`;
           html += `<td class="ps-col-doctype">
 					<a href="/app/${frappe.router.slug(row.doctype)}" target="_blank">${esc(row.doctype)}</a>
-					${row.if_owner ? '<span class="ps-badge ps-badge-owner">if_owner</span>' : ""}
 					${row.source === "custom" ? '<span class="ps-badge ps-badge-custom ps-xs-badge">custom</span>' : ""}
 				</td>`;
+          if (this._edit_mode) {
+            html += `<td class="ps-col-owner ps-cell ps-cell-owner-edit ${row.if_owner ? "ps-owner-on" : ""}"
+						data-doctype="${esc(row.doctype)}" data-value="${row.if_owner ? 1 : 0}"
+						title="${__("Click to toggle Only If Creator")}">
+						${row.if_owner ? "\u2713" : "\u25CB"}
+					</td>`;
+          } else {
+            html += `<td class="ps-col-owner ps-cell">
+						${row.if_owner ? '<span class="ps-owner-badge" title="' + __("Only If Creator") + '">\u2713</span>' : ""}
+					</td>`;
+          }
           MATRIX_RIGHTS.forEach((r) => {
             const val = row.permissions[r];
             if (val === "na") {
@@ -947,6 +979,9 @@
         if (this._edit_mode) {
           $group.find(".ps-cell-editable").on("click", (e) => {
             this._toggle_cell($(e.currentTarget));
+          });
+          $group.find(".ps-cell-owner-edit").on("click", (e) => {
+            this._toggle_if_owner($(e.currentTarget));
           });
         }
         this.wrapper.append($group);
@@ -992,6 +1027,132 @@
           break;
         }
       }
+    }
+    _toggle_if_owner($cell) {
+      const doctype = $cell.data("doctype");
+      const new_val = $cell.data("value") ? 0 : 1;
+      const role = this.data.role;
+      $cell.addClass("ps-cell-saving");
+      frappe.call({
+        method: "permission_manager.permission_manager.api.matrix.update_if_owner",
+        args: { doctype, role, permlevel: 0, value: new_val },
+        callback: (r) => {
+          var _a;
+          $cell.removeClass("ps-cell-saving");
+          if ((_a = r.message) == null ? void 0 : _a.success) {
+            $cell.data("value", new_val).toggleClass("ps-owner-on", !!new_val).text(new_val ? "\u2713" : "\u25CB");
+            this._update_local_if_owner(doctype, new_val);
+            frappe.show_alert({
+              message: `${doctype} \u2014 ${__("Only If Creator")}: ${new_val ? __("On") : __("Off")}`,
+              indicator: new_val ? "blue" : "orange"
+            });
+          }
+        },
+        error: () => {
+          $cell.removeClass("ps-cell-saving");
+          frappe.show_alert({ message: __("Failed to update owner flag."), indicator: "red" });
+        }
+      });
+    }
+    _update_local_if_owner(doctype, value) {
+      for (const mod of this.data.modules) {
+        const row = mod.doctypes.find((r) => r.doctype === doctype);
+        if (row) {
+          row.if_owner = value;
+          break;
+        }
+      }
+    }
+  };
+
+  // ../permission_manager/permission_manager/public/js/components/role_profile_explorer.js
+  var RoleProfileExplorer = class {
+    constructor(opts) {
+      this.wrapper = opts.wrapper;
+      this.data = opts.data;
+      this.on_export = opts.on_export;
+      this.render();
+    }
+    render() {
+      this.wrapper.empty();
+      const d = this.data;
+      const role_chips = d.roles.map((r) => `<span class="ps-badge">${esc(r)}</span>`).join(" ");
+      const $header = $(`
+			<div class="ps-matrix-header">
+				<div class="ps-role-info">
+					<h3>${esc(d.profile)}</h3>
+					<div class="ps-roles-list ps-profile-roles">${role_chips || `<em>${__("No roles in this profile.")}</em>`}</div>
+					<div class="ps-stats">
+						${__("{0} roles", [d.roles.length])}
+						&nbsp;|&nbsp;
+						${__("{0} DocTypes", [d.total_doctypes])}
+						&nbsp;|&nbsp;
+						${__("{0} users assigned", [d.user_count])}
+					</div>
+				</div>
+				<div class="ps-header-actions">
+					<a class="btn btn-xs btn-default ps-open-profile-btn"
+						href="/app/role-profile/${encodeURIComponent(d.profile)}" target="_blank">
+						${frappe.utils.icon("edit", "xs")} ${__("Edit Profile")}
+					</a>
+					<button class="btn btn-xs btn-default ps-export-profile-btn">
+						${frappe.utils.icon("download", "xs")} ${__("Export CSV")}
+					</button>
+				</div>
+			</div>
+		`);
+      $header.find(".ps-export-profile-btn").on("click", () => {
+        if (this.on_export)
+          this.on_export(d.profile);
+      });
+      this.wrapper.append($header);
+      if (!d.modules || !d.modules.length) {
+        this.wrapper.append(
+          $(`<div class="ps-empty-state">${__("This profile has no permissions (no roles or roles have no permissions).")}</div>`)
+        );
+        return;
+      }
+      this.wrapper.append($(`
+			<div class="ps-table-hint">
+				${frappe.utils.icon("info", "xs")}
+				${__("Showing the combined (unioned) permissions for all roles in this profile. \u2713 means at least one role grants this right.")}
+			</div>
+		`));
+      d.modules.forEach((mod) => {
+        const $group = $(`
+				<div class="ps-module-group">
+					<div class="ps-module-header">
+						<strong>${esc(mod.module)}</strong>
+						<span class="ps-module-count">(${mod.doctypes.length})</span>
+					</div>
+				</div>
+			`);
+        let html = `<table class="ps-matrix-table ps-matrix-compact">
+				<thead><tr><th class="ps-col-doctype">${__("DocType")}</th>`;
+        MATRIX_RIGHTS.forEach((r) => {
+          html += `<th class="ps-col-perm" title="${RIGHT_FULL_LABELS[r] || r}">${RIGHT_LABELS[r]}</th>`;
+        });
+        html += `</tr></thead><tbody>`;
+        mod.doctypes.forEach((row) => {
+          html += `<tr class="ps-matrix-row" data-doctype="${esc(row.doctype)}">`;
+          html += `<td class="ps-col-doctype">
+					<a href="/app/${frappe.router.slug(row.doctype)}" target="_blank">${esc(row.doctype)}</a>
+					${row.source === "custom" ? '<span class="ps-badge ps-badge-custom ps-xs-badge">custom</span>' : ""}
+				</td>`;
+          MATRIX_RIGHTS.forEach((r) => {
+            const val = row.permissions[r];
+            if (val === "na") {
+              html += `<td class="ps-cell ps-cell-na">\u2014</td>`;
+            } else {
+              html += `<td class="ps-cell ${val ? "ps-cell-allow" : "ps-cell-deny"}">${val ? "\u2713" : "\u2717"}</td>`;
+            }
+          });
+          html += `</tr>`;
+        });
+        html += `</tbody></table>`;
+        $group.append($(html));
+        this.wrapper.append($group);
+      });
     }
   };
 
@@ -1689,6 +1850,8 @@
         { key: "user", label: __("User View"), icon: "users" },
         { key: "doctype", label: __("DocType View"), icon: "list" },
         { key: "role", label: __("Role View"), icon: "tool" },
+        { key: "profile", label: __("Profile View"), icon: "group" },
+        { key: "accounts", label: __("Accounts"), icon: "bank" },
         { key: "lookup", label: __("Who Can?"), icon: "search" },
         { key: "compare", label: __("Compare"), icon: "compare" },
         { key: "dashboard", label: __("Health"), icon: "dashboard" }
@@ -1725,6 +1888,12 @@
           break;
         case "role":
           this._render_role_tab();
+          break;
+        case "profile":
+          this._render_profile_tab();
+          break;
+        case "accounts":
+          this._render_accounts_tab();
           break;
         case "lookup":
           this._render_lookup_tab();
@@ -1912,12 +2081,41 @@
               on_export: (type, id) => this._export_csv(type, id),
               on_simulate: (u) => showUserSimulation(u)
             });
+            this._inject_override_button(user);
           }
         },
         error: () => {
           this.$content.html(
             this._error_html(__("Failed to load permission matrix."), () => this.load_user_matrix(user))
           );
+        }
+      });
+    }
+    _inject_override_button(user) {
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.get_user_override_status",
+        args: { user },
+        callback: (r) => {
+          if (!r.message)
+            return;
+          const status = r.message;
+          const $actions = this.$content.find(".ps-header-actions").first();
+          const $acct_btn = $(`
+					<button class="btn btn-xs btn-default ps-acct-restrict-btn">
+						${frappe.utils.icon("account", "xs")} ${__("Account Restrictions")}
+					</button>
+				`);
+          $acct_btn.on("click", () => this._show_account_restrictions_dialog(user));
+          $actions.prepend($acct_btn);
+          const is_active = status.is_active;
+          const $btn = $(`
+					<button class="btn btn-xs ${is_active ? "btn-warning" : "btn-default"} ps-override-btn">
+						${frappe.utils.icon("lock", "xs")}
+						${is_active ? `\u26A1 ${__("Override Active")}` : __("Override for User")}
+					</button>
+				`);
+          $btn.on("click", () => this._show_user_override_dialog(user, status));
+          $actions.prepend($btn);
         }
       });
     }
@@ -1968,6 +2166,963 @@
           );
         }
       });
+    }
+    _render_accounts_tab() {
+      this.$search.html(`
+			<div class="ps-search-row">
+				<div class="ps-search-field" id="ps-acctab-user-select"></div>
+			</div>
+		`);
+      this.acctab_user_field = frappe.ui.form.make_control({
+        df: {
+          fieldtype: "Link",
+          options: "User",
+          fieldname: "acctab_user",
+          placeholder: __("Select User\u2026"),
+          label: __("User"),
+          change: () => {
+            const user = this.acctab_user_field.get_value();
+            if (user) {
+              this._current_acctab_user = user;
+              this._load_user_accounts(user);
+            }
+          }
+        },
+        parent: this.$search.find("#ps-acctab-user-select"),
+        render_input: true
+      });
+      this.$content.html(this._welcome_html(
+        frappe.utils.icon("bank", "lg"),
+        __("Select a User"),
+        __("Control which accounts this user can access. Drag accounts into the Restricted zone to limit access.")
+      ));
+    }
+    _load_user_accounts(user) {
+      this.$content.html(this._show_skeleton(5));
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.get_user_account_restrictions",
+        args: { user },
+        callback: (r) => {
+          if (r.message)
+            this._render_account_dnd(user, r.message);
+        },
+        error: () => {
+          this.$content.html(
+            this._error_html(__("Failed to load accounts."), () => this._load_user_accounts(user))
+          );
+        }
+      });
+    }
+    _render_account_dnd(user, data) {
+      const restricted_map = {};
+      for (const r of data.restrictions)
+        restricted_map[r.for_value] = r;
+      const available = data.all_accounts.filter((a) => !restricted_map[a.name]);
+      const _coa_html = (accounts) => {
+        if (!accounts.length)
+          return `<div class="ps-ac-zone-empty">${__("No accounts available.")}</div>`;
+        const ROOT_ORDER = ["Asset", "Liability", "Income", "Expense", "Equity"];
+        const ROOT_ICON = { Asset: "\u{1F4CA}", Liability: "\u{1F4CB}", Income: "\u{1F4C8}", Expense: "\u{1F4C9}", Equity: "\u2696\uFE0F" };
+        const name_map = {};
+        accounts.forEach((a) => {
+          name_map[a.name] = __spreadProps(__spreadValues({}, a), { children: [] });
+        });
+        const root_nodes = [];
+        accounts.forEach((a) => {
+          const node = name_map[a.name];
+          if (a.parent_account && name_map[a.parent_account]) {
+            name_map[a.parent_account].children.push(node);
+          } else {
+            root_nodes.push(node);
+          }
+        });
+        const count_leaves = (node) => {
+          if (!node.is_group)
+            return 1;
+          return node.children.reduce((s, c) => s + count_leaves(c), 0);
+        };
+        const render_node = (node) => {
+          const label = node.account_name || node.name.split(" - ")[0];
+          const search_val = (node.account_name + " " + node.name).toLowerCase();
+          if (node.is_group) {
+            const leaf_count = count_leaves(node);
+            const children_html = node.children.map(render_node).join("");
+            return `<div class="ps-ac-folder-row">
+						<div class="ps-ac-folder-hdr ps-ac-expanded"
+						     data-name="${esc(node.name)}"
+						     data-search="${esc(search_val)}">
+							<span class="ps-ac-folder-icon">\u25B6</span>
+							<span class="ps-ac-folder-name">${esc(label)}</span>
+							${leaf_count ? `<span class="ps-ac-node-count">${leaf_count}</span>` : ""}
+						</div>
+						<div class="ps-ac-folder-body">
+							${children_html}
+						</div>
+					</div>`;
+          } else {
+            return `<div class="ps-ac-chip ps-ac-avail" draggable="true"
+						data-account="${esc(node.name)}"
+						data-source="available"
+						data-company="${esc(node.company || "")}"
+						data-root="${esc(node.root_type || "")}"
+						data-search="${esc(search_val)}"
+						title="${esc(node.name)}">
+						<span class="ps-ac-chip-label">${esc(label)}</span>
+						${node.account_type ? `<span class="ps-ac-type-badge">${esc(node.account_type)}</span>` : ""}
+					</div>`;
+          }
+        };
+        const companies2 = [...new Set(accounts.map((a) => a.company || ""))].sort();
+        let html = "";
+        companies2.forEach((co) => {
+          const co_tops = root_nodes.filter((n) => (n.company || "") === co);
+          const roots = [...new Set(accounts.filter((a) => (a.company || "") === co).map((a) => a.root_type || "Other"))];
+          const sorted_roots = [...ROOT_ORDER.filter((r) => roots.includes(r)), ...roots.filter((r) => !ROOT_ORDER.includes(r))];
+          html += `<div class="ps-ac-company-block" data-company="${esc(co)}">
+					<div class="ps-ac-company-hdr">${frappe.utils.icon("building", "xs")} ${esc(co)}</div>`;
+          sorted_roots.forEach((root) => {
+            const root_tops = co_tops.filter((n) => (n.root_type || "Other") === root);
+            html += `<div class="ps-ac-root-block" data-root="${esc(root)}">
+						<div class="ps-ac-root-hdr">${ROOT_ICON[root] || "\u{1F4C1}"} ${esc(root)}</div>
+						${root_tops.map(render_node).join("")}
+					</div>`;
+          });
+          html += `</div>`;
+        });
+        return html;
+      };
+      const restricted_html = data.restrictions.map((r) => {
+        const label = r.for_value.includes(" - ") ? r.for_value.split(" - ")[0] : r.for_value;
+        return `<div class="ps-ac-chip ps-ac-restricted" draggable="true"
+						data-account="${esc(r.for_value)}"
+						data-perm-name="${esc(r.name)}"
+						data-source="restricted"
+						title="${esc(r.for_value)}">
+						<span class="ps-ac-chip-label">${esc(label)}</span>
+						<button class="ps-ac-chip-x btn-naked" data-perm-name="${esc(r.name)}" title="${__("Remove")}">\u2715</button>
+					</div>`;
+      }).join("");
+      const restricted_zone_content = data.is_restricted ? `<div class="ps-ac-restricted-chips">${restricted_html}</div>` : `<div class="ps-ac-zone-unrestricted">
+				${frappe.utils.icon("tick-circle", "sm")}
+				<span>${__("No restrictions \u2014 user has access to all accounts.")}</span>
+				<small>${__("Drag accounts here to restrict.")}</small>
+			   </div>`;
+      const companies = [...new Set(available.map((a) => a.company || ""))].sort();
+      const co_notice = (data.company_restrictions || []).length ? `<span class="ps-ac-co-notice">\u{1F512} ${__("Filtered to {0} company restriction(s)", [data.company_restrictions.length])}</span>` : "";
+      this.$content.html(`
+			<div class="ps-accounts-dnd">
+
+				<div class="ps-ac-topbar">
+					<div class="ps-ac-topbar-left">
+						<span class="ps-ac-user-badge">${esc(user)}</span>
+						<span class="ps-ac-status-badge ${data.is_restricted ? "ps-ac-status-restricted" : "ps-ac-status-open"}">
+							${data.is_restricted ? `\u{1F512} ${__("{0} restricted", [data.restrictions.length])}` : `\u2713 ${__("All accounts open")}`}
+						</span>
+						${co_notice}
+					</div>
+					<div class="ps-ac-topbar-right">
+						${data.is_restricted ? `<button class="btn btn-sm btn-default ps-ac-clear-btn">
+							${frappe.utils.icon("undo", "xs")} ${__("Clear All")}
+						</button>` : ""}
+					</div>
+				</div>
+
+				<div class="ps-ac-filter-row">
+					<input class="form-control ps-ac-search" placeholder="${__("Search accounts\u2026")}" type="text" autocomplete="off" />
+					<select class="form-control ps-ac-company-sel">
+						<option value="">${__("All Companies")}</option>
+						${companies.map((co) => `<option value="${esc(co)}">${esc(co)}</option>`).join("")}
+					</select>
+				</div>
+
+				<div class="ps-ac-panels">
+					<div class="ps-ac-panel">
+						<div class="ps-ac-panel-header">
+							${frappe.utils.icon("list", "xs")}
+							<strong>${__("Chart of Accounts")}</strong>
+							<div class="ps-ac-tree-btns">
+								<button class="btn btn-xs btn-default ps-ac-expand-all-btn" title="${__("Expand All")}">\u229E ${__("Expand")}</button>
+								<button class="btn btn-xs btn-default ps-ac-collapse-all-btn" title="${__("Collapse All")}">\u229F ${__("Collapse")}</button>
+							</div>
+							<span class="ps-ac-panel-hint">${__("drag \u2192 to restrict")}</span>
+						</div>
+						<div class="ps-drop-zone ps-ac-avail-zone ps-ac-scroll" data-target="available">
+							<div class="ps-ac-avail-inner">${_coa_html(available)}</div>
+						</div>
+					</div>
+
+					<div class="ps-ac-arrow">\u21C4</div>
+
+					<div class="ps-ac-panel">
+						<div class="ps-ac-panel-header">
+							${frappe.utils.icon("lock", "xs")}
+							<strong>${__("Restricted To")}</strong>
+							<span class="ps-ac-panel-hint">${__("drag \u2190 to unrestrict")}</span>
+						</div>
+						<div class="ps-drop-zone ps-ac-restr-zone ps-ac-scroll" data-target="restricted">
+							${restricted_zone_content}
+						</div>
+					</div>
+				</div>
+			</div>
+		`);
+      this._bind_account_dnd(user);
+    }
+    _bind_account_dnd(user) {
+      const $c = this.$content;
+      $c.off("click.ps-folder");
+      $c.on("click.ps-folder", ".ps-ac-folder-hdr", function() {
+        const $hdr = $(this);
+        const $body = $hdr.next(".ps-ac-folder-body");
+        if ($hdr.hasClass("ps-ac-expanded")) {
+          $hdr.removeClass("ps-ac-expanded");
+          $body.hide();
+        } else {
+          $hdr.addClass("ps-ac-expanded");
+          $body.show();
+        }
+      });
+      $c.find(".ps-ac-expand-all-btn").off("click").on("click", () => {
+        $c.find(".ps-ac-folder-hdr").addClass("ps-ac-expanded");
+        $c.find(".ps-ac-folder-body").show();
+      });
+      $c.find(".ps-ac-collapse-all-btn").off("click").on("click", () => {
+        $c.find(".ps-ac-folder-hdr").removeClass("ps-ac-expanded");
+        $c.find(".ps-ac-folder-body").hide();
+      });
+      const _refresh_tree = () => {
+        const q = ($c.find(".ps-ac-search").val() || "").trim().toLowerCase();
+        const co = $c.find(".ps-ac-company-sel").val() || "";
+        $c.find(".ps-ac-company-block").each(function() {
+          $(this).toggle(!co || $(this).attr("data-company") === co);
+        });
+        if (!q) {
+          $c.find(".ps-ac-root-block, .ps-ac-folder-row, .ps-ac-chip.ps-ac-avail").show();
+          $c.find(".ps-ac-folder-hdr").each(function() {
+            const $body = $(this).next(".ps-ac-folder-body");
+            if ($(this).hasClass("ps-ac-expanded"))
+              $body.show();
+            else
+              $body.hide();
+          });
+          return;
+        }
+        $c.find(".ps-ac-folder-body").show();
+        $c.find(".ps-ac-folder-row").show();
+        $c.find(".ps-ac-chip.ps-ac-avail").each(function() {
+          const s = ($(this).attr("data-search") || "").toLowerCase();
+          $(this).toggle(s.includes(q));
+        });
+        $c.find(".ps-ac-folder-row").get().reverse().forEach((row) => {
+          const has_visible = $(row).find(".ps-ac-chip.ps-ac-avail:visible").length > 0;
+          $(row).toggle(has_visible);
+        });
+        $c.find(".ps-ac-root-block").each(function() {
+          $(this).toggle($(this).find(".ps-ac-chip.ps-ac-avail:visible").length > 0);
+        });
+      };
+      $c.find(".ps-ac-search").on("input", _refresh_tree);
+      $c.find(".ps-ac-company-sel").on("change", _refresh_tree);
+      $c.find(".ps-ac-clear-btn").on("click", () => {
+        frappe.confirm(
+          __("Remove ALL account restrictions for this user? They will have access to all accounts."),
+          () => {
+            frappe.call({
+              method: "permission_manager.permission_manager.api.user_profile.clear_user_account_restrictions",
+              args: { user },
+              callback: () => {
+                frappe.show_alert({ message: __("All restrictions cleared."), indicator: "green" });
+                this._load_user_accounts(user);
+              }
+            });
+          }
+        );
+      });
+      $c.find(".ps-ac-chip-x").on("click", (e) => {
+        e.stopPropagation();
+        const perm_name = $(e.currentTarget).data("permName");
+        this._do_remove_account_restriction(user, perm_name);
+      });
+      const _make_draggable = (selector) => {
+        $c.find(selector).each(function() {
+          const chip = this;
+          chip.addEventListener("dragstart", (e) => {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("account", chip.getAttribute("data-account") || "");
+            e.dataTransfer.setData("source", chip.getAttribute("data-source") || "");
+            e.dataTransfer.setData("permname", chip.getAttribute("data-perm-name") || "");
+            setTimeout(() => chip.classList.add("ps-chip-dragging"), 0);
+          });
+          chip.addEventListener("dragend", () => {
+            chip.classList.remove("ps-chip-dragging");
+          });
+        });
+      };
+      _make_draggable(".ps-ac-chip.ps-ac-avail");
+      _make_draggable(".ps-ac-chip.ps-ac-restricted");
+      const _make_droppable = (selector) => {
+        const el = $c.find(selector)[0];
+        if (!el)
+          return;
+        let enter_count = 0;
+        el.addEventListener("dragenter", (e) => {
+          e.preventDefault();
+          enter_count++;
+          el.classList.add("ps-dz-over");
+        });
+        el.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        });
+        el.addEventListener("dragleave", () => {
+          enter_count--;
+          if (enter_count <= 0) {
+            enter_count = 0;
+            el.classList.remove("ps-dz-over");
+          }
+        });
+        el.addEventListener("drop", (e) => {
+          e.preventDefault();
+          enter_count = 0;
+          el.classList.remove("ps-dz-over");
+          const account = e.dataTransfer.getData("account");
+          const source = e.dataTransfer.getData("source");
+          const permName = e.dataTransfer.getData("permname");
+          const target = el.getAttribute("data-target");
+          if (source === "available" && target === "restricted" && account) {
+            this._do_add_account_restriction(user, account);
+          } else if (source === "restricted" && target === "available" && permName) {
+            this._do_remove_account_restriction(user, permName);
+          }
+        });
+      };
+      _make_droppable(".ps-ac-avail-zone");
+      _make_droppable(".ps-ac-restr-zone");
+    }
+    _do_add_account_restriction(user, account) {
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.add_user_account_restriction",
+        args: { user, account },
+        callback: (r) => {
+          var _a;
+          if ((_a = r.message) == null ? void 0 : _a.success) {
+            frappe.show_alert({ message: __("{0} restricted.", [account]), indicator: "orange" });
+            this._load_user_accounts(user);
+          }
+        }
+      });
+    }
+    _do_remove_account_restriction(user, perm_name) {
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.remove_user_account_restriction",
+        args: { perm_name },
+        callback: (r) => {
+          var _a;
+          if ((_a = r.message) == null ? void 0 : _a.success) {
+            frappe.show_alert({ message: __("Restriction removed."), indicator: "green" });
+            this._load_user_accounts(user);
+          }
+        }
+      });
+    }
+    _render_profile_tab() {
+      this.$search.html(`
+			<div class="ps-search-row">
+				<div class="ps-search-field" id="ps-profile-select"></div>
+			</div>
+		`);
+      this.profile_field = frappe.ui.form.make_control({
+        df: {
+          fieldtype: "Link",
+          options: "Role Profile",
+          fieldname: "profile",
+          placeholder: __("Select Role Profile\u2026"),
+          label: __("Role Profile"),
+          change: () => {
+            const profile = this.profile_field.get_value();
+            if (profile) {
+              this._current_profile = profile;
+              this.load_profile_matrix(profile);
+            }
+          }
+        },
+        parent: this.$search.find("#ps-profile-select"),
+        render_input: true
+      });
+      this.$content.html(this._welcome_html(
+        frappe.utils.icon("group", "lg"),
+        __("Select a Role Profile"),
+        __("View the combined permission matrix for all roles inside a profile, and see which users are on it.")
+      ));
+    }
+    load_profile_matrix(profile) {
+      this.$content.html(this._show_skeleton(6));
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.get_role_profile_matrix",
+        args: { profile },
+        callback: (r) => {
+          if (r.message) {
+            this.components.profile = new RoleProfileExplorer({
+              wrapper: this.$content,
+              data: r.message,
+              on_export: (p) => this._export_profile_csv(p)
+            });
+          }
+        },
+        error: () => {
+          this.$content.html(
+            this._error_html(__("Failed to load profile matrix."), () => this.load_profile_matrix(profile))
+          );
+        }
+      });
+    }
+    _export_profile_csv(profile) {
+      frappe.dom.freeze(__("Generating CSV\u2026"));
+      frappe.call({
+        method: "permission_manager.permission_manager.api.user_profile.get_role_profile_matrix",
+        args: { profile },
+        callback: (r) => {
+          frappe.dom.unfreeze();
+          if (!r.message)
+            return;
+          const d = r.message;
+          const rows = [
+            ["Role Profile", d.profile],
+            ["Roles", d.roles.join(", ")],
+            ["User Count", d.user_count],
+            [],
+            ["Module", "DocType", "Source", ...MATRIX_RIGHTS]
+          ];
+          for (const mod of d.modules) {
+            for (const dt of mod.doctypes) {
+              rows.push([
+                mod.module,
+                dt.doctype,
+                dt.source,
+                ...MATRIX_RIGHTS.map((r2) => {
+                  const v = dt.permissions[r2];
+                  return v === "na" ? "N/A" : v ? "1" : "0";
+                })
+              ]);
+            }
+          }
+          const csv = rows.map((r2) => r2.map((c) => `"${String(c != null ? c : "").replace(/"/g, '""')}"`).join(",")).join("\n");
+          const safe = profile.replace(/[^a-z0-9]/gi, "_");
+          _download_csv_raw(csv, `permissions_profile_${safe}.csv`);
+          frappe.show_alert({ message: __("CSV downloaded."), indicator: "green" });
+        },
+        error: () => {
+          frappe.dom.unfreeze();
+          frappe.show_alert({ message: __("Export failed."), indicator: "red" });
+        }
+      });
+    }
+    _show_user_override_dialog(user, status) {
+      const is_active = status.is_active;
+      const dlg = new frappe.ui.Dialog({
+        title: __("Override Permissions \u2014 {0}", [user]),
+        size: "extra-large",
+        fields: [
+          { fieldtype: "HTML", fieldname: "status_html" },
+          { fieldtype: "HTML", fieldname: "editor_html" }
+        ]
+      });
+      const $status = dlg.fields_dict.status_html.$wrapper;
+      const $editor = dlg.fields_dict.editor_html.$wrapper;
+      const saved_items = status.override_permissions || [];
+      if (is_active) {
+        const dt_chips = saved_items.map((item) => {
+          var _a;
+          const rights = MATRIX_RIGHTS.filter((r) => {
+            var _a2;
+            return (_a2 = item.permissions) == null ? void 0 : _a2[r];
+          }).join(", ");
+          const is_owner = (_a = item.permissions) == null ? void 0 : _a.if_owner;
+          const rights_label = (rights || "\u2014") + (is_owner ? " \u2605" : "");
+          return `<span class="ps-oe-cur-chip" title="${esc(rights_label)}${is_owner ? " \u2014 " + __("Only If Creator") : ""}">
+					${esc(item.doctype)}
+					<em class="ps-oe-cur-rights">${esc(rights_label)}</em>
+				</span>`;
+        }).join("");
+        $status.html(`
+				<div class="ps-override-status-section">
+					<div class="ps-override-active-banner">
+						${frappe.utils.icon("tick-circle", "sm")}
+						<strong>${__("Override Active")}</strong>
+						&nbsp;\u2014&nbsp; ${__("Profile")}: <code>${esc(status.profile_name)}</code>
+						&nbsp;|&nbsp; <span class="ps-oe-cur-count">${saved_items.length} ${__("DocType(s)")}</span>
+					</div>
+					${saved_items.length ? `<div class="ps-oe-cur-list">${dt_chips}</div>` : ""}
+					<div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+						<button class="btn btn-sm btn-danger ps-remove-override-btn">
+							${frappe.utils.icon("delete", "xs")} ${__("Remove Override")}
+						</button>
+						<span style="color:var(--text-muted);font-size:12px;">
+							${__("Update the rows below and click Apply to save changes.")}
+						</span>
+					</div>
+				</div>
+			`);
+        $status.find(".ps-remove-override-btn").on("click", () => {
+          frappe.confirm(
+            __("Remove override for {0}? The user will revert to standard role permissions.", [user]),
+            () => {
+              frappe.dom.freeze(__("Removing override\u2026"));
+              frappe.call({
+                method: "permission_manager.permission_manager.api.user_profile.remove_user_override",
+                args: { user },
+                callback: (r) => {
+                  var _a;
+                  frappe.dom.unfreeze();
+                  frappe.show_alert({ message: ((_a = r.message) == null ? void 0 : _a.msg) || __("Override removed."), indicator: "green" });
+                  dlg.hide();
+                  this.load_user_matrix(user);
+                },
+                error: () => frappe.dom.unfreeze()
+              });
+            }
+          );
+        });
+      } else {
+        $status.html(`
+				<div class="ps-override-status-section">
+					<div class="ps-oe-mode-hint">
+						<span class="ps-mode-hint-restrict">
+							${__("A full permission snapshot is taken for this user. For each DocType you add, they will have EXACTLY the permissions you check \u2014 original roles are replaced so nothing can win them back. All other DocTypes stay as-is.")}
+						</span>
+					</div>
+				</div>
+			`);
+      }
+      const initial_rows = saved_items.map((item) => ({
+        doctype: item.doctype,
+        permissions: item.permissions || {}
+      }));
+      this._render_override_editor($editor, initial_rows);
+      dlg.set_primary_action(__("Apply Override"), () => {
+        const rows = this._collect_override_rows($editor);
+        if (!rows.length) {
+          frappe.show_alert({ message: __("Add at least one DocType row."), indicator: "orange" });
+          return;
+        }
+        dlg.hide();
+        frappe.dom.freeze(__("Snapshotting permissions and applying override\u2026"));
+        frappe.call({
+          method: "permission_manager.permission_manager.api.user_profile.create_user_override",
+          args: { user, override_items: JSON.stringify(rows), mode: "restrict" },
+          callback: (r) => {
+            var _a;
+            frappe.dom.unfreeze();
+            if ((_a = r.message) == null ? void 0 : _a.success) {
+              frappe.show_alert({ message: r.message.msg, indicator: "green" });
+              frappe.msgprint({
+                title: __("Override Applied"),
+                message: `
+								<b>${__("Role")}:</b> <code>${esc(r.message.role_name)}</code><br>
+								<b>${__("Profile")}:</b> <code>${esc(r.message.profile_name)}</code><br>
+								<b>${__("Roles in profile")}:</b> ${(r.message.roles_included || []).map(esc).join(", ")}
+							`,
+                indicator: "green"
+              });
+              this.load_user_matrix(user);
+            }
+          },
+          error: () => frappe.dom.unfreeze()
+        });
+      });
+      dlg.show();
+    }
+    _render_override_editor($editor, initial_rows) {
+      $editor.empty();
+      const cols_html = MATRIX_RIGHTS.map(
+        (r) => `<th class="ps-oe-perm-col" title="${RIGHT_FULL_LABELS[r] || r}">${RIGHT_LABELS[r]}</th>`
+      ).join("");
+      $editor.html(`
+			<div class="ps-override-editor">
+				<div class="ps-oe-header">
+					<span class="ps-oe-header-label">${__("Per-DocType permissions:")}</span>
+					<div style="display:flex;gap:6px;align-items:center;">
+						<button class="btn btn-xs btn-default ps-oe-deps-btn" title="${__("For every DocType with Create checked, auto-add read access to its linked DocTypes")}">
+							\u{1F517} ${__("Suggest dependencies")}
+						</button>
+						<span class="ps-oe-row-count"></span>
+					</div>
+				</div>
+				<div class="ps-oe-search-wrap">
+					<div class="ps-oe-search-icon">${frappe.utils.icon("search", "xs")}</div>
+					<input class="form-control ps-oe-dt-search"
+						placeholder="${__("Filter rows or type to add a new DocType\u2026")}"
+						type="text" autocomplete="off" />
+					<ul class="ps-oe-suggestions"></ul>
+				</div>
+				<div class="ps-oe-table-wrap">
+					<table class="ps-matrix-table ps-oe-table">
+						<thead>
+							<tr>
+								<th class="ps-oe-dt-col">${__("DocType")}</th>
+								<th class="ps-oe-perm-col ps-oe-owner-col" title="${__("Only If Creator \u2014 permissions apply only to documents this user owns")}">Own</th>
+								${cols_html}
+								<th></th>
+							</tr>
+						</thead>
+						<tbody class="ps-oe-tbody"></tbody>
+					</table>
+				</div>
+				<div class="ps-oe-empty" style="${initial_rows.length ? "display:none;" : ""}">
+					<em>${__("No rows yet \u2014 type a DocType name above to add one.")}</em>
+				</div>
+			</div>
+		`);
+      const $tbody = $editor.find(".ps-oe-tbody");
+      const $search = $editor.find(".ps-oe-dt-search");
+      const $suggestions = $editor.find(".ps-oe-suggestions");
+      const $row_count = $editor.find(".ps-oe-row-count");
+      const _update_count = () => {
+        const total = $tbody.find("tr").length;
+        const visible = $tbody.find("tr:visible").length;
+        if (!total) {
+          $row_count.text("");
+          return;
+        }
+        $row_count.text(
+          visible < total ? __("{0} / {1} DocType(s)", [visible, total]) : __("{0} DocType(s)", [total])
+        );
+      };
+      const _add_row = (doctype, permissions = {}) => {
+        var _a;
+        if (!doctype)
+          return;
+        if ($tbody.find(`tr[data-doctype="${doctype}"]`).length) {
+          const $existing = $tbody.find(`tr[data-doctype="${doctype}"]`);
+          (_a = $existing[0]) == null ? void 0 : _a.scrollIntoView({ behavior: "smooth", block: "center" });
+          $existing.addClass("ps-oe-row-flash");
+          setTimeout(() => $existing.removeClass("ps-oe-row-flash"), 1200);
+          return;
+        }
+        const owner_cell = `<td class="ps-oe-perm-col ps-oe-owner-col" title="${__("Only If Creator")}">
+				<input type="checkbox" class="ps-oe-check" data-ptype="if_owner"
+					${permissions["if_owner"] ? "checked" : ""} />
+			</td>`;
+        const checks_html = MATRIX_RIGHTS.map((r) => `
+				<td class="ps-oe-perm-col">
+					<input type="checkbox" class="ps-oe-check" data-ptype="${r}"
+						${permissions[r] ? "checked" : ""} />
+				</td>
+			`).join("");
+        const $row = $(`
+				<tr data-doctype="${esc(doctype)}">
+					<td class="ps-oe-dt-col ps-oe-dt-name">${esc(doctype)}</td>
+					${owner_cell}
+					${checks_html}
+					<td>
+						<button class="btn btn-xs btn-danger ps-oe-remove-btn" title="${__("Remove")}">
+							${frappe.utils.icon("delete", "xs")}
+						</button>
+					</td>
+				</tr>
+			`);
+        $tbody.append($row);
+        $row.find(".ps-oe-remove-btn").on("click", () => {
+          $row.remove();
+          if (!$tbody.find("tr").length)
+            $editor.find(".ps-oe-empty").show();
+          _update_count();
+        });
+        $editor.find(".ps-oe-empty").hide();
+        _update_count();
+      };
+      let _timer = null;
+      const _refresh_suggestions = (q) => {
+        if (!q) {
+          $suggestions.empty().hide();
+          return;
+        }
+        clearTimeout(_timer);
+        _timer = setTimeout(() => {
+          const added = new Set(
+            $tbody.find("tr").map((_, r) => $(r).attr("data-doctype")).get()
+          );
+          frappe.call({
+            method: "frappe.client.get_list",
+            args: {
+              doctype: "DocType",
+              filters: [["name", "like", `%${q}%`], ["istable", "=", 0]],
+              fields: ["name"],
+              limit: 10,
+              order_by: "name asc"
+            },
+            callback: (r) => {
+              $suggestions.empty();
+              const fresh = (r.message || []).filter((dt) => !added.has(dt.name));
+              if (!fresh.length) {
+                $suggestions.hide();
+                return;
+              }
+              fresh.forEach((dt) => {
+                $(`<li class="ps-oe-sug-item">
+								<span class="ps-sug-plus">+</span> ${esc(dt.name)}
+							</li>`).on("mousedown", (e) => {
+                  e.preventDefault();
+                  _add_row(dt.name);
+                  $search.val("").trigger("input");
+                }).appendTo($suggestions);
+              });
+              $suggestions.show();
+            }
+          });
+        }, 200);
+      };
+      $search.on("input", function() {
+        const q = $(this).val().trim();
+        $tbody.find("tr").each(function() {
+          const dt = $(this).attr("data-doctype") || "";
+          $(this).toggle(!q || dt.toLowerCase().includes(q.toLowerCase()));
+        });
+        $editor.find(".ps-oe-empty").toggle(!q && !$tbody.find("tr").length);
+        _update_count();
+        _refresh_suggestions(q);
+      });
+      $search.on("blur", () => setTimeout(() => $suggestions.hide(), 160));
+      $search.on("focus", () => {
+        if ($suggestions.children().length)
+          $suggestions.show();
+      });
+      $search.on("keydown", (e) => {
+        if (e.key === "Escape") {
+          $suggestions.hide();
+          $search.val("").trigger("input");
+        }
+        if (e.key === "Enter") {
+          const $first = $suggestions.find(".ps-oe-sug-item").first();
+          if ($first.length) {
+            const name = $first.text().replace(/^\+\s*/, "").trim();
+            _add_row(name);
+            $search.val("").trigger("input");
+            $suggestions.hide();
+          }
+        }
+      });
+      initial_rows.forEach((r) => _add_row(r.doctype, r.permissions));
+      $editor.find(".ps-oe-deps-btn").on("click", () => {
+        const create_dts = [];
+        $tbody.find("tr").each(function() {
+          const dt = $(this).attr("data-doctype");
+          const has_create = $(this).find(".ps-oe-check[data-ptype='create']").is(":checked");
+          if (dt && has_create)
+            create_dts.push(dt);
+        });
+        if (!create_dts.length) {
+          frappe.show_alert({ message: __("Check 'C' (Create) on at least one DocType first."), indicator: "orange" });
+          return;
+        }
+        const $btn = $editor.find(".ps-oe-deps-btn").prop("disabled", true).text(__("Analyzing\u2026"));
+        let pending = create_dts.length;
+        let total_added = 0;
+        create_dts.forEach((dt) => {
+          frappe.call({
+            method: "permission_manager.permission_manager.api.user_profile.get_doctype_create_deps",
+            args: { doctype: dt },
+            callback: (r) => {
+              (r.message || []).forEach((dep) => {
+                if (!$tbody.find(`tr[data-doctype="${dep}"]`).length) {
+                  _add_row(dep, { read: 1 });
+                  total_added++;
+                }
+              });
+              pending--;
+              if (pending === 0) {
+                $btn.prop("disabled", false).html(`\u{1F517} ${__("Suggest dependencies")}`);
+                frappe.show_alert({
+                  message: total_added ? __("Added {0} linked DocType(s) with read access.", [total_added]) : __("All linked DocTypes already present."),
+                  indicator: total_added ? "blue" : "green"
+                });
+              }
+            },
+            error: () => {
+              pending--;
+              if (pending === 0)
+                $btn.prop("disabled", false).html(`\u{1F517} ${__("Suggest dependencies")}`);
+            }
+          });
+        });
+      });
+    }
+    _collect_override_rows($editor) {
+      const rows = [];
+      $editor.find(".ps-oe-tbody tr").each(function() {
+        const dt = $(this).attr("data-doctype");
+        if (!dt)
+          return;
+        const permissions = {};
+        $(this).find(".ps-oe-check").each(function() {
+          permissions[$(this).data("ptype")] = $(this).is(":checked") ? 1 : 0;
+        });
+        rows.push({ doctype: dt, permissions });
+      });
+      return rows;
+    }
+    _show_account_restrictions_dialog(user) {
+      const dlg = new frappe.ui.Dialog({
+        title: __("Account Restrictions \u2014 {0}", [user]),
+        size: "large",
+        fields: [{ fieldtype: "HTML", fieldname: "content_html" }]
+      });
+      const $w = dlg.fields_dict.content_html.$wrapper;
+      $w.html(`<div class="ps-loading">${__("Loading\u2026")}</div>`);
+      const _reload = () => {
+        frappe.call({
+          method: "permission_manager.permission_manager.api.user_profile.get_user_account_restrictions",
+          args: { user },
+          callback: (r) => r.message && _render(r.message)
+        });
+      };
+      const _render = (data) => {
+        const has_restrictions = data.is_restricted;
+        const restricted_set = new Set(data.restrictions.map((r) => r.for_value));
+        const company_map = {};
+        for (const acct of data.all_accounts) {
+          const co = acct.company || "Other";
+          company_map[co] = company_map[co] || [];
+          company_map[co].push(acct);
+        }
+        const restriction_rows = has_restrictions ? data.restrictions.map((r) => `
+					<div class="ps-ar-row">
+						<span class="ps-badge ps-badge-custom">${esc(r.for_value)}</span>
+						<button class="btn btn-xs btn-danger ps-ar-remove-btn" data-name="${esc(r.name)}">
+							${frappe.utils.icon("delete", "xs")}
+						</button>
+					</div>
+				`).join("") : `<div class="ps-ar-unrestricted">
+					${frappe.utils.icon("tick-circle", "sm")}
+					${__("No restrictions \u2014 user can access ALL accounts.")}
+				   </div>`;
+        const company_opts = Object.keys(company_map).sort().map(
+          (co) => `<option value="${esc(co)}">${esc(co)}</option>`
+        ).join("");
+        $w.html(`
+				<div class="ps-accounts-control">
+
+					<div class="ps-ar-section">
+						<div class="ps-ar-section-header">
+							<strong>${__("Current Account Restrictions")}</strong>
+							${has_restrictions ? `
+								<button class="btn btn-xs btn-default ps-ar-clear-btn">
+									${frappe.utils.icon("undo", "xs")} ${__("Clear All (Allow All)")}
+								</button>` : ""}
+						</div>
+						<div class="ps-ar-restrictions-list">${restriction_rows}</div>
+					</div>
+
+					<div class="ps-ar-section">
+						<div class="ps-ar-section-header">
+							<strong>${__("Add Account Restriction")}</strong>
+						</div>
+						<div class="ps-ar-add-row">
+							<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+								<div style="flex:0 0 160px;">
+									<label class="control-label">${__("Filter by Company")}</label>
+									<select class="form-control ps-ar-company-filter">
+										<option value="">${__("All Companies")}</option>
+										${company_opts}
+									</select>
+								</div>
+								<div style="flex:1;min-width:200px;" id="ps-ar-acct-field"></div>
+								<div>
+									<button class="btn btn-sm btn-primary ps-ar-add-btn" style="margin-bottom:4px;">
+										${frappe.utils.icon("add", "xs")} ${__("Add Restriction")}
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div class="ps-ar-help">
+						${frappe.utils.icon("info", "xs")}
+						${__("When any Account restriction is set, this user can only access the listed accounts (and linked records). No restrictions = access all accounts.")}
+					</div>
+
+				</div>
+			`);
+        const acct_ctl = frappe.ui.form.make_control({
+          df: {
+            fieldtype: "Link",
+            options: "Account",
+            fieldname: "account",
+            placeholder: __("Select Account\u2026"),
+            label: __("Account")
+          },
+          parent: $w.find("#ps-ar-acct-field"),
+          render_input: true
+        });
+        $w.find(".ps-ar-company-filter").on("change", function() {
+          const co = $(this).val();
+          acct_ctl.df.get_query = co ? () => ({ filters: { company: co, disabled: 0 } }) : () => ({ filters: { disabled: 0 } });
+          acct_ctl.set_value("");
+        });
+        $w.find(".ps-ar-add-btn").on("click", () => {
+          const account = acct_ctl.get_value();
+          if (!account) {
+            frappe.show_alert({ message: __("Select an account first."), indicator: "orange" });
+            return;
+          }
+          if (restricted_set.has(account)) {
+            frappe.show_alert({ message: __("Account already restricted."), indicator: "orange" });
+            return;
+          }
+          frappe.dom.freeze(__("Adding restriction\u2026"));
+          frappe.call({
+            method: "permission_manager.permission_manager.api.user_profile.add_user_account_restriction",
+            args: { user, account },
+            callback: (r) => {
+              var _a;
+              frappe.dom.unfreeze();
+              if ((_a = r.message) == null ? void 0 : _a.success) {
+                frappe.show_alert({ message: __("Restriction added."), indicator: "green" });
+                _reload();
+              }
+            },
+            error: () => frappe.dom.unfreeze()
+          });
+        });
+        $w.find(".ps-ar-remove-btn").on("click", (e) => {
+          const name = $(e.currentTarget).data("name");
+          frappe.dom.freeze(__("Removing\u2026"));
+          frappe.call({
+            method: "permission_manager.permission_manager.api.user_profile.remove_user_account_restriction",
+            args: { perm_name: name },
+            callback: (r) => {
+              var _a;
+              frappe.dom.unfreeze();
+              if ((_a = r.message) == null ? void 0 : _a.success) {
+                frappe.show_alert({ message: __("Restriction removed."), indicator: "green" });
+                _reload();
+              }
+            },
+            error: () => frappe.dom.unfreeze()
+          });
+        });
+        $w.find(".ps-ar-clear-btn").on("click", () => {
+          frappe.confirm(
+            __("Clear ALL account restrictions for {0}? The user will have access to all accounts.", [user]),
+            () => {
+              frappe.dom.freeze(__("Clearing\u2026"));
+              frappe.call({
+                method: "permission_manager.permission_manager.api.user_profile.clear_user_account_restrictions",
+                args: { user },
+                callback: (r) => {
+                  frappe.dom.unfreeze();
+                  frappe.show_alert({ message: __("All restrictions cleared."), indicator: "green" });
+                  _reload();
+                },
+                error: () => frappe.dom.unfreeze()
+              });
+            }
+          );
+        });
+      };
+      dlg.set_primary_action(__("Close"), () => dlg.hide());
+      dlg.show();
+      _reload();
     }
     _show_quick_tools_dialog(user) {
       const dlg = new frappe.ui.Dialog({
@@ -2266,6 +3421,13 @@
           },
           ...perm_fields,
           {
+            fieldtype: "Check",
+            fieldname: "perm_if_owner",
+            label: __("Only If Creator"),
+            description: __("When checked, all above permissions apply only to documents owned/created by this user"),
+            default: 0
+          },
+          {
             fieldtype: "Section Break",
             label: __("Target DocTypes")
           },
@@ -2289,6 +3451,7 @@
           PERMS.forEach((r) => {
             permissions[r] = vals[`perm_${r}`] ? 1 : 0;
           });
+          permissions["if_owner"] = vals["perm_if_owner"] ? 1 : 0;
           dlg.hide();
           frappe.dom.freeze(__("Applying permissions\u2026"));
           frappe.call({
@@ -2403,6 +3566,7 @@
     WhyExplainer,
     UserExplorer,
     RoleExplorer,
+    RoleProfileExplorer,
     ReverseLookup,
     RoleComparison,
     HealthDashboard,
@@ -2413,4 +3577,4 @@
     esc
   });
 })();
-//# sourceMappingURL=permission_manager.bundle.QBEOKAGF.js.map
+//# sourceMappingURL=permission_manager.bundle.NV7OZQYE.js.map
