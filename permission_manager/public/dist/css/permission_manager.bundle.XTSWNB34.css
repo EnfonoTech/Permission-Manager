@@ -1,4 +1,4 @@
-/* ../../../../../tmp/tmp-41949-9ZRz3i0U84Cj/permission_manager/permission_manager/public/scss/permission_manager.bundle.css */
+/* ../../../../../tmp/tmp-8176-iOVU9aBxi8QH/permission_manager/permission_manager/public/scss/permission_manager.bundle.css */
 :root {
   --ps-primary: #6366f1;
   --ps-primary-light: #818cf8;
@@ -2764,4 +2764,35 @@
 .ps-wfd-loading {
   padding: 40px;
 }
-/*# sourceMappingURL=permission_manager.bundle.WPHIBDMT.css.map */
+.ps-ai-date-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ps-ai-date-range .ps-ai-from-date,
+.ps-ai-date-range .ps-ai-to-date {
+  width: 130px;
+  font-size: 12px;
+  padding: 3px 6px;
+  height: 28px;
+}
+.ps-ai-date-range .ps-ai-date-sep {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.ps-ai-col-sortable {
+  cursor: pointer;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  white-space: nowrap;
+}
+.ps-ai-col-sortable:hover {
+  background: var(--subtle-accent, #f0f0f0);
+}
+.ps-ai-col-sortable .ps-ai-sort-icon {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+/*# sourceMappingURL=permission_manager.bundle.XTSWNB34.css.map */

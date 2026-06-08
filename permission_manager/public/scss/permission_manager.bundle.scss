@@ -2301,3 +2301,37 @@
 .ps-wfd-leg--return::before   { background: #fff7ed; border-color: #f5a623; }
 
 .ps-wfd-loading { padding: 40px; }
+
+// ─── Date range filter & sortable header ──────────────────────────────────
+.ps-ai-date-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  .ps-ai-from-date,
+  .ps-ai-to-date {
+    width: 130px;
+    font-size: 12px;
+    padding: 3px 6px;
+    height: 28px;
+  }
+
+  .ps-ai-date-sep {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+}
+
+.ps-ai-col-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+
+  &:hover { background: var(--subtle-accent, #f0f0f0); }
+
+  .ps-ai-sort-icon {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-left: 2px;
+  }
+}

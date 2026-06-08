@@ -343,7 +343,10 @@ Each group shows a table with these columns:
 **Filter:**
 - **Search box** — filters by DocType name, document number, creator, or workflow state
 - **Transaction dropdown** — narrows to a single DocType
-- Both filters work together
+- **From Date / To Date** — optional date range filter; leave either blank to filter open-ended (e.g. set only *From Date* to see everything since that date)
+- All filters work together
+
+**Date sorting:** click the **Date** column header to toggle between newest-first (↓) and oldest-first (↑). The sort indicator updates in place.
 
 **Stats bar:** shows item count per group, plus a warning if there are high-priority or overdue (>30 days) items.
 

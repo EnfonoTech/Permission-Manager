@@ -1904,6 +1904,9 @@
       this.collapsed = {};
       this._search = "";
       this._filter_doctype = "";
+      this._from_date = "";
+      this._to_date = "";
+      this._date_sort = "desc";
       this._active_tab = "pending";
       this._build_shell();
       this.load();
@@ -1926,6 +1929,11 @@
                         <select class="form-control ps-ai-dt-filter">
                             <option value="">${__("All Transactions")}</option>
                         </select>
+                        <div class="ps-ai-date-range">
+                            <input class="form-control ps-ai-from-date" type="date" title="${__("From Date")}" />
+                            <span class="ps-ai-date-sep">\u2013</span>
+                            <input class="form-control ps-ai-to-date"   type="date" title="${__("To Date")}" />
+                        </div>
                         <button class="btn btn-sm btn-default ps-ai-refresh-btn">
                             ${frappe.utils.icon("refresh", "xs")} ${__("Refresh")}
                         </button>
@@ -1957,6 +1965,16 @@
         if (this._active_tab === "pending")
           this._apply_filter();
       });
+      this.wrapper.find(".ps-ai-from-date").on("change", (e) => {
+        this._from_date = $(e.target).val();
+        if (this._active_tab === "pending")
+          this._apply_filter();
+      });
+      this.wrapper.find(".ps-ai-to-date").on("change", (e) => {
+        this._to_date = $(e.target).val();
+        if (this._active_tab === "pending")
+          this._apply_filter();
+      });
       this.wrapper.find(".ps-ai-nav-tab").on("click", (e) => {
         const tab = $(e.currentTarget).data("tab");
         this.wrapper.find(".ps-ai-nav-tab").removeClass("active");
@@ -1966,7 +1984,7 @@
       });
     }
     _switch_tab(tab) {
-      const $search_row = this.wrapper.find(".ps-ai-search, .ps-ai-dt-filter");
+      const $search_row = this.wrapper.find(".ps-ai-search, .ps-ai-dt-filter, .ps-ai-date-range");
       $search_row.toggle(tab === "pending");
       this.wrapper.find(".ps-ai-stats-bar").toggle(tab === "pending");
       if (tab === "pending") {
@@ -2071,7 +2089,9 @@
                         <table class="ps-matrix-table ps-ai-table">
                             <thead><tr>
                                 <th class="ps-ai-col-chk"></th>
-                                <th class="ps-ai-col-date">${__("Date")}</th>
+                                <th class="ps-ai-col-date ps-ai-col-sortable" data-sort="date">
+                                    ${__("Date")} <span class="ps-ai-sort-icon">${this._date_sort === "asc" ? "\u2191" : "\u2193"}</span>
+                                </th>
                                 <th class="ps-ai-col-pri">${__("Priority")}</th>
                                 <th class="ps-ai-col-trans">${__("Transaction")}</th>
                                 <th class="ps-ai-col-num">${__("#")}</th>
@@ -2092,7 +2112,15 @@
       const $bulk_bar = $grp.find(".ps-ai-bulk-bar");
       const $bulk_btn = $grp.find(".ps-ai-bulk-btn");
       const $bulk_rej = $grp.find(".ps-ai-bulk-reject-btn");
-      group.items.forEach((item) => this._render_row($tbody, item));
+      const sorted = [...group.items].sort((a, b) => {
+        const cmp = (a.creation_iso || "").localeCompare(b.creation_iso || "");
+        return this._date_sort === "asc" ? cmp : -cmp;
+      });
+      sorted.forEach((item) => this._render_row($tbody, item));
+      $grp.find(".ps-ai-col-sortable").on("click", () => {
+        this._date_sort = this._date_sort === "asc" ? "desc" : "asc";
+        this._render();
+      });
       $grp.find(".ps-ai-grp-hdr").on("click", (e) => {
         if ($(e.target).closest("input, button, label, a").length)
           return;
@@ -2143,7 +2171,8 @@
                 data-name="${esc(item.name)}"
                 data-doctype="${esc(item.doctype)}"
                 data-docname="${esc(item.docname)}"
-                data-search="${esc(search_val)}">
+                data-search="${esc(search_val)}"
+                data-creation="${esc(item.creation_iso || "")}">
                 <td class="ps-ai-col-chk">
                     <input type="checkbox" class="ps-ai-row-chk" />
                 </td>
@@ -2435,11 +2464,15 @@
     _apply_filter() {
       const q = this._search;
       const dt = this._filter_doctype;
+      const from = this._from_date;
+      const to = this._to_date;
       this.wrapper.find(".ps-ai-row").each((_, row) => {
         const $row = $(row);
         const s = ($row.attr("data-search") || "").toLowerCase();
         const rdt = $row.attr("data-doctype") || "";
-        const show = (!q || s.includes(q)) && (!dt || rdt === dt);
+        const ciso = $row.attr("data-creation") || "";
+        const in_date = (!from || ciso >= from) && (!to || ciso <= to);
+        const show = (!q || s.includes(q)) && (!dt || rdt === dt) && in_date;
         $row.toggle(show);
         $row.next(".ps-ai-preview-row").toggle(show && $row.next(".ps-ai-preview-row").find(".ps-ai-preview-body").data("loaded"));
       });
@@ -4676,4 +4709,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.WM2F3MXF.js.map
+//# sourceMappingURL=permission_manager.bundle.MQFVRIU7.js.map

@@ -197,6 +197,7 @@ def get_my_pending_approvals() -> dict:
             "doctype":           doctype,
             "docname":           docname,
             "date":              frappe.utils.format_datetime(act.creation, "dd/MM/yy HH:mm"),
+            "creation_iso":      str(act.creation)[:10],  # YYYY-MM-DD for client-side filtering/sorting
             "priority":          priority,
             "state":             state,
             "role_id":           role_id,
