@@ -278,6 +278,13 @@ function _open_comment_dialog(frm, transition) {
 		title: __("Workflow Action: {0}", [transition.action]),
 		fields: [
 			{
+				fieldtype: "Select",
+				fieldname: "priority",
+				label: __("Priority"),
+				options: ["Low", "Medium", "High", "Critical"].join("\n"),
+				default: "Medium",
+			},
+			{
 				fieldtype: "Small Text",
 				fieldname: "comment",
 				label: __("Comment"),
@@ -294,20 +301,21 @@ function _open_comment_dialog(frm, transition) {
 				return;
 			}
 			d.hide();
-			_apply_workflow_with_comment(frm, transition.action, values.comment);
+			_apply_workflow_with_comment(frm, transition.action, values.comment, values.priority);
 		},
 	});
 
 	d.show();
 }
 
-function _apply_workflow_with_comment(frm, action, comment) {
+function _apply_workflow_with_comment(frm, action, comment, priority) {
 	frappe.dom.freeze();
 	frappe
 		.xcall("permission_manager.permission_manager.workflow.apply_workflow", {
 			doc: frm.doc,
 			action: action,
 			comment: comment,
+			priority: priority || "Medium",
 		})
 		.then((doc) => {
 			frappe.model.sync(doc);

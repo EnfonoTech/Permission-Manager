@@ -34,6 +34,27 @@ def _check_access():
         )
 
 
+def _audit(doctype: str, role: str, ptype: str, old_value, new_value, source: str, note: str = ""):
+    """Write a PM Permission Log entry. Silently swallows errors so audit never breaks the UI."""
+    try:
+        frappe.get_doc({
+            "doctype": "PM Permission Log",
+            "changed_by": frappe.session.user,
+            "changed_on": frappe.utils.now_datetime(),
+            "source": source,
+            "doctype_name": doctype,
+            "role": role or "",
+            "permlevel": 0,
+            "ptype": ptype or "",
+            "old_value": str(old_value) if old_value is not None else "",
+            "new_value": str(new_value) if new_value is not None else "",
+            "ip_address": frappe.local.request_ip if hasattr(frappe.local, "request_ip") else "",
+            "note": note,
+        }).insert(ignore_permissions=True)
+    except Exception:
+        pass
+
+
 # ─── Read APIs ────────────────────────────────────────────────────────────────
 
 @frappe.whitelist()
@@ -302,8 +323,10 @@ def update_permission(doctype: str, role: str, permlevel: int, ptype: str, value
         row.insert(ignore_permissions=True)
         row_name = row.name
 
+    old_val = frappe.db.get_value("Custom DocPerm", row_name, ptype)
     frappe.db.set_value("Custom DocPerm", row_name, ptype, value)
     frappe.clear_cache(doctype=doctype)
+    _audit(doctype, role, ptype, old_val, value, "DocType View")
 
     return {"success": True, "doctype": doctype, "role": role, "ptype": ptype, "value": value}
 
@@ -328,8 +351,10 @@ def update_if_owner(doctype: str, role: str, permlevel: int, value: int) -> dict
     if not row_name:
         frappe.throw(_("Permission row not found for role '{0}' on '{1}'.").format(role, doctype))
 
+    old_val = frappe.db.get_value("Custom DocPerm", row_name, "if_owner")
     frappe.db.set_value("Custom DocPerm", row_name, "if_owner", value)
     frappe.clear_cache(doctype=doctype)
+    _audit(doctype, role, "if_owner", old_val, value, "if_owner")
     return {"success": True}
 
 
@@ -368,6 +393,7 @@ def add_role_permission(doctype: str, role: str, permlevel: int = 0) -> dict:
     }).insert(ignore_permissions=True)
 
     frappe.clear_cache(doctype=doctype)
+    _audit(doctype, role, "read", None, 1, "Add Role", f"Added role at permlevel {permlevel}")
     return get_doctype_matrix(doctype)
 
 
@@ -390,6 +416,7 @@ def remove_role_permission(doctype: str, role: str, permlevel: int = 0) -> dict:
 
     frappe.delete_doc("Custom DocPerm", row_name, ignore_permissions=True)
     frappe.clear_cache(doctype=doctype)
+    _audit(doctype, role, "", "exists", None, "Remove Role", f"Removed role at permlevel {permlevel}")
     return get_doctype_matrix(doctype)
 
 
@@ -405,6 +432,7 @@ def reset_to_standard(doctype: str) -> dict:
         frappe.delete_doc("Custom DocPerm", row_name, ignore_permissions=True)
 
     frappe.clear_cache(doctype=doctype)
+    _audit(doctype, "", "", "custom", "standard", "Reset to Standard")
     return get_doctype_matrix(doctype)
 
 

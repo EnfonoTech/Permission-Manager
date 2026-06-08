@@ -12,6 +12,7 @@
   "next_state",
   "send_email_to_creator",
   "require_comment",
+  "is_return_for_correction",
   "column_break_eyal",
   "approver_type",
   "allowed",
@@ -69,6 +70,22 @@
    "fieldname": "require_comment",
    "fieldtype": "Check",
    "label": "Require Comment"
+  },
+  {
+   "default": "0",
+   "description": "When checked, this action sends the document back to the submitter for correction. A comment is always required.",
+   "fieldname": "is_return_for_correction",
+   "fieldtype": "Check",
+   "label": "Return for Correction"
+  },
+  {
+   "fieldname": "priority",
+   "fieldtype": "Select",
+   "label": "Priority",
+   "options": "Low\nMedium\nHigh\nCritical",
+   "default": "Medium",
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "column_break_eyal",

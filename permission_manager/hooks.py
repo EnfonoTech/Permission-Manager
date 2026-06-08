@@ -20,6 +20,12 @@ add_to_apps_screen = [
         "route": "/app/permission-studio",
     },
     {
+        "name": "pm_approval_inbox",
+        "logo": "/assets/permission_manager/images/logo.svg",
+        "title": "My Approvals",
+        "route": "/app/pm-approval-inbox",
+    },
+    {
         "name": "pm_demo",
         "logo": "/assets/permission_manager/images/logo.svg",
         "title": "PM Workflow Demo",
@@ -38,6 +44,7 @@ app_include_css = ["permission_manager.bundle.css"]
 doctype_js = {
     "Leave Application": "public/js/leave_application.js",
     "Expense Claim":     "public/js/expense_claim.js",
+    "PM Workflow":       "public/js/pm_workflow_form.js",
 }
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -108,6 +115,13 @@ doc_events = {
 
 # ─── Accounting dimensions ────────────────────────────────────────────────────
 accounting_dimension_doctypes = ["PM Workflow"]
+
+# ─── Scheduled jobs ───────────────────────────────────────────────────────────
+scheduler_events = {
+    "daily": [
+        "permission_manager.permission_manager.api.approvals.send_approval_reminders",
+    ],
+}
 
 # ─── After install — create custom fields + sync pages ────────────────────────
 after_install = "permission_manager.permission_manager.install.after_install"

@@ -409,9 +409,11 @@ def has_approval_access(user, doc, transition) -> bool:
 # ─── Workflow application ─────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def apply_workflow(doc, action: str, comment: str = None):
+def apply_workflow(doc, action: str, comment: str = None, priority: str = None):
     doc = frappe.get_doc(frappe.parse_json(doc))
     doc.load_from_db()
+    if priority:
+        frappe.local._pm_action_priority = priority
 
     workflow = get_workflow(doc.doctype, doc.name)
     transitions = get_transitions(doc, workflow.name)
@@ -424,6 +426,12 @@ def apply_workflow(doc, action: str, comment: str = None):
     if not has_approval_access(user, doc, transition):
         frappe.throw(_("Self-approval is not allowed for this action."))
 
+    is_return = bool(transition.get("is_return_for_correction"))
+
+    # Return for Correction always requires a comment
+    if is_return and not comment:
+        frappe.throw(_("A comment is required when returning a document for correction."))
+
     doc.set(workflow.workflow_state_field, transition.next_state)
 
     next_state = next((s for s in workflow.states if s.state == transition.next_state), None)
@@ -434,27 +442,75 @@ def apply_workflow(doc, action: str, comment: str = None):
         doc.set(next_state.update_field, next_state.update_value)
 
     new_docstatus = DocStatus(next_state.doc_status or 0)
+
+    # Return for Correction: if document is submitted, revert to draft so submitter can edit
+    if is_return and doc.docstatus.is_submitted():
+        new_docstatus = DocStatus(0)
+
     _update_docstatus(doc, new_docstatus)
 
-    color_map = {
-        0: {"bg": "#fff3cd", "border": "#ffc107", "text": "#856404", "icon": "⊙"},
-        1: {"bg": "#e8f5e9", "border": "#4caf50", "text": "#2e7d32", "icon": "✓"},
-        2: {"bg": "#ffebee", "border": "#f44336", "text": "#c62828", "icon": "✕"},
-    }
-    style = color_map.get(int(next_state.doc_status or 0), color_map[0])
-    comment_html = (
-        f"<div style='padding:8px;background:{style['bg']};border-left:4px solid {style['border']};border-radius:4px;'>"
-        f"<strong style='color:{style['text']}'>{style['icon']} Moved to</strong> "
-        f"<span style='color:#1565c0;font-weight:bold;'>{next_state.state}</span></div>"
-    )
-    if comment:
-        comment_html += (
-            "<div style='margin-top:8px;padding:8px;background:#e3f2fd;"
-            "border-left:4px solid #2196f3;border-radius:4px;'>"
-            f"<strong style='color:#1565c0;'>💬 Note:</strong> <em style='color:#666;'>{comment}</em></div>"
+    if is_return:
+        comment_html = (
+            "<div style='padding:8px;background:#fff3e0;border-left:4px solid #ff9800;border-radius:4px;'>"
+            "<strong style='color:#e65100;'>↩ Returned for Correction</strong> "
+            f"<span style='color:#555;'>by {frappe.get_cached_value('User', user, 'full_name') or user}</span></div>"
         )
+        if comment:
+            comment_html += (
+                "<div style='margin-top:8px;padding:8px;background:#fff8e1;"
+                "border-left:4px solid #ffc107;border-radius:4px;'>"
+                f"<strong style='color:#f57f17;'>✏ Reason:</strong> <em style='color:#555;'>{comment}</em></div>"
+            )
+        # Notify the original submitter
+        submitter = get_original_submitter(doc) or doc.owner
+        if submitter and submitter != user:
+            _notify_return_for_correction(doc, submitter, user, comment)
+    else:
+        color_map = {
+            0: {"bg": "#fff3cd", "border": "#ffc107", "text": "#856404", "icon": "⊙"},
+            1: {"bg": "#e8f5e9", "border": "#4caf50", "text": "#2e7d32", "icon": "✓"},
+            2: {"bg": "#ffebee", "border": "#f44336", "text": "#c62828", "icon": "✕"},
+        }
+        style = color_map.get(int(next_state.doc_status or 0), color_map[0])
+        comment_html = (
+            f"<div style='padding:8px;background:{style['bg']};border-left:4px solid {style['border']};border-radius:4px;'>"
+            f"<strong style='color:{style['text']}'>{style['icon']} Moved to</strong> "
+            f"<span style='color:#1565c0;font-weight:bold;'>{next_state.state}</span></div>"
+        )
+        if comment:
+            comment_html += (
+                "<div style='margin-top:8px;padding:8px;background:#e3f2fd;"
+                "border-left:4px solid #2196f3;border-radius:4px;'>"
+                f"<strong style='color:#1565c0;'>💬 Note:</strong> <em style='color:#666;'>{comment}</em></div>"
+            )
+
     doc.add_comment("Workflow", comment_html)
     return doc
+
+
+def _notify_return_for_correction(doc, submitter: str, returned_by: str, reason: str):
+    """Send a Notification Log + email to the submitter when a document is returned."""
+    try:
+        frappe.get_doc({
+            "doctype": "Notification Log",
+            "subject": _("Document returned for correction: {0} {1}").format(doc.doctype, doc.name),
+            "for_user": submitter,
+            "document_type": doc.doctype,
+            "document_name": doc.name,
+            "type": "Alert",
+            "from_user": returned_by,
+            "email_content": _(
+                "{0} has returned {1} {2} for correction.<br><br>"
+                "<strong>Reason:</strong> {3}"
+            ).format(
+                frappe.get_cached_value("User", returned_by, "full_name") or returned_by,
+                doc.doctype,
+                doc.name,
+                reason or _("No reason provided"),
+            ),
+        }).insert(ignore_permissions=True)
+    except Exception:
+        frappe.log_error("PM Workflow: failed to send return-for-correction notification")
 
 
 def _update_docstatus(doc, new_docstatus: DocStatus) -> None:
@@ -764,3 +820,28 @@ def set_workflow_state_on_action(doc, workflow_name: str, action: str):
         if state.doc_status == docstatus:
             doc.set(field, state.state)
             return
+
+
+@frappe.whitelist()
+def get_diagram_data(workflow_name: str) -> dict:
+    """Return states + transitions for SVG diagram rendering."""
+    wf = frappe.get_doc("PM Workflow", workflow_name)
+    states = [
+        {
+            "name": s.state,
+            "doc_status": s.doc_status,
+            "is_optional_state": getattr(s, "is_optional_state", 0),
+        }
+        for s in (wf.states or [])
+    ]
+    transitions = [
+        {
+            "from_state": t.state,
+            "to_state": t.next_state,
+            "action": t.action,
+            "is_return": cint(getattr(t, "is_return_for_correction", 0)),
+            "allowed": t.allowed,
+        }
+        for t in (wf.transitions or [])
+    ]
+    return {"states": states, "transitions": transitions, "workflow_name": workflow_name}

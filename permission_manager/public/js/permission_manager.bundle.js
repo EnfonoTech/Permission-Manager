@@ -9,6 +9,8 @@ import { RoleProfileExplorer } from "./components/role_profile_explorer";
 import { ReverseLookup, _download_csv } from "./components/reverse_lookup";
 import { RoleComparison } from "./components/role_comparison";
 import { HealthDashboard, showUserSimulation } from "./components/health_dashboard";
+import { ApprovalInbox } from "./components/approval_inbox";
+import { WorkflowDiagram } from "./components/workflow_diagram";
 import { MATRIX_RIGHTS, RIGHT_LABELS, RIGHT_FULL_LABELS, PERM_ICONS, esc } from "./utils/helpers";
 
 window.permission_manager_studio = window.permission_manager_studio || {};
@@ -53,6 +55,7 @@ class PermissionStudio {
 			{ key: "lookup",    label: __("Who Can?"),     icon: "search"   },
 			{ key: "compare",   label: __("Compare"),      icon: "compare"  },
 			{ key: "dashboard", label: __("Health"),       icon: "dashboard"},
+			{ key: "auditlog",  label: __("Audit Log"),    icon: "file"     },
 		];
 
 		tabs.forEach((tab) => {
@@ -88,6 +91,7 @@ class PermissionStudio {
 			case "lookup":    this._render_lookup_tab();    break;
 			case "compare":   this._render_compare_tab();   break;
 			case "dashboard": this._render_dashboard_tab(); break;
+			case "auditlog":  this._render_auditlog_tab();  break;
 		}
 	}
 
@@ -236,6 +240,90 @@ class PermissionStudio {
 
 	_render_dashboard_tab() {
 		this.components.dashboard = new HealthDashboard({ wrapper: this.$content });
+	}
+
+	// ── Audit Log tab ─────────────────────────────────────────────────────────
+
+	_render_auditlog_tab() {
+		// Search controls
+		this.$search.html(`
+			<div class="ps-search-row">
+				<div class="ps-search-field" id="ps-al-doctype-field"></div>
+				<div class="ps-search-field" id="ps-al-role-field"></div>
+				<button class="btn btn-sm btn-primary ps-al-search-btn">${__("Search")}</button>
+				<button class="btn btn-sm btn-default ps-al-clear-btn">${__("Clear")}</button>
+			</div>
+		`);
+
+		const dt_field = frappe.ui.form.make_control({
+			parent: this.$search.find("#ps-al-doctype-field"),
+			df: { fieldtype: "Link", options: "DocType", label: __("DocType"), placeholder: __("All DocTypes") },
+			render_input: true,
+		});
+		const role_field = frappe.ui.form.make_control({
+			parent: this.$search.find("#ps-al-role-field"),
+			df: { fieldtype: "Data", label: __("Role"), placeholder: __("All Roles") },
+			render_input: true,
+		});
+
+		const _load = () => {
+			this.$content.html(`<div class="ps-loading">${__("Loading audit log…")}</div>`);
+			frappe.call({
+				method: "permission_manager.permission_manager.api.approvals.get_permission_audit_log",
+				args: {
+					doctype_name: dt_field.get_value() || "",
+					role: role_field.get_value() || "",
+					limit: 200,
+				},
+				callback: (r) => {
+					const rows = r.message || [];
+					if (!rows.length) {
+						this.$content.html(`<div class="ps-empty-state">${__("No audit log entries found.")}</div>`);
+						return;
+					}
+					let html = `
+						<div class="ps-al-wrap">
+						<table class="ps-matrix-table">
+							<thead><tr>
+								<th>${__("Date")}</th>
+								<th>${__("By")}</th>
+								<th>${__("Source")}</th>
+								<th>${__("DocType")}</th>
+								<th>${__("Role")}</th>
+								<th>${__("Field")}</th>
+								<th>${__("From")}</th>
+								<th>${__("To")}</th>
+								<th>${__("Note")}</th>
+							</tr></thead>
+							<tbody>
+					`;
+					rows.forEach((row) => {
+						html += `<tr>
+							<td style="white-space:nowrap;font-size:11px">${esc(row.changed_on || "")}</td>
+							<td>${esc(row.changed_by || "")}</td>
+							<td><span class="ps-badge ps-badge-custom ps-xs-badge">${esc(row.source || "")}</span></td>
+							<td>${esc(row.doctype_name || "")}</td>
+							<td>${esc(row.role || "")}</td>
+							<td>${esc(row.ptype || "")}</td>
+							<td class="ps-al-old">${esc(String(row.old_value || ""))}</td>
+							<td class="ps-al-new">${esc(String(row.new_value || ""))}</td>
+							<td class="text-muted" style="font-size:11px">${esc(row.note || "")}</td>
+						</tr>`;
+					});
+					html += `</tbody></table></div>`;
+					this.$content.html(html);
+				},
+			});
+		};
+
+		this.$search.find(".ps-al-search-btn").on("click", _load);
+		this.$search.find(".ps-al-clear-btn").on("click", () => {
+			dt_field.set_value("");
+			role_field.set_value("");
+			_load();
+		});
+
+		_load();
 	}
 
 	// ── Data loaders ──────────────────────────────────────────────────────────
@@ -1931,8 +2019,12 @@ Object.assign(window.permission_manager_studio, {
 	RoleComparison,
 	HealthDashboard,
 	showUserSimulation,
+	WorkflowDiagram,
 	MATRIX_RIGHTS,
 	RIGHT_LABELS,
 	PERM_ICONS,
 	esc,
 });
+
+// Standalone Approval Inbox — exported globally for the pm-approval-inbox page
+window.pm_approval_inbox = { ApprovalInbox };

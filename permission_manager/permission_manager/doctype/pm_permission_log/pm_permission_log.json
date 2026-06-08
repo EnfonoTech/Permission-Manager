@@ -1,0 +1,137 @@
+{
+ "actions": [],
+ "autoname": "PM-LOG-.YYYY.-.MM.-.####",
+ "creation": "2026-06-08 00:00:00",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "changed_by",
+  "changed_on",
+  "source",
+  "column_break_1",
+  "doctype_name",
+  "role",
+  "permlevel",
+  "details_section",
+  "ptype",
+  "old_value",
+  "new_value",
+  "column_break_2",
+  "ip_address",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "changed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Changed By",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "changed_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Changed On",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source",
+   "options": "DocType View\nRole View\nBulk Apply\nOverride\nReset to Standard\nAdd Role\nRemove Role\nif_owner",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "doctype_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DocType",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "role",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Role",
+   "read_only": 1
+  },
+  {
+   "fieldname": "permlevel",
+   "fieldtype": "Int",
+   "label": "Perm Level",
+   "read_only": 1
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "ptype",
+   "fieldtype": "Data",
+   "label": "Permission Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "old_value",
+   "fieldtype": "Data",
+   "label": "Old Value",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_value",
+   "fieldtype": "Data",
+   "label": "New Value",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ip_address",
+   "fieldtype": "Data",
+   "label": "IP Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note",
+   "read_only": 1
+  }
+ ],
+ "in_create": 0,
+ "links": [],
+ "modified": "2026-06-08 00:00:00",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Permission Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "read_only": 1,
+ "row_format": "Dynamic",
+ "search_fields": "changed_by,doctype_name,role",
+ "sort_field": "changed_on",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "doctype_name",
+ "track_changes": 0
+}

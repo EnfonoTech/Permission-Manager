@@ -139,9 +139,22 @@ def process_workflow_actions(doc, state):
     if not next_transitions:
         return
 
+    # Priority: use the one the approver explicitly chose, else fall back to transition definition
+    _PWEIGHT = {"Critical": 0, "Urgent": 0, "High": 1, "Medium": 2, "Low": 3}
+    override_priority = getattr(frappe.local, "_pm_action_priority", None)
+    if override_priority:
+        frappe.local._pm_action_priority = None  # consume so it doesn't bleed into next save
+        action_priority = override_priority
+    else:
+        best = min(
+            next_transitions,
+            key=lambda t: _PWEIGHT.get(getattr(t, "priority", "Medium") or "Medium", 2),
+        )
+        action_priority = getattr(best, "priority", None) or "Medium"
+
     # Build resolved assignments: list of (approver_type, approver, assigned_to, for_submitter)
     assignments = _resolve_transition_assignments(next_transitions, doc, workflow)
-    create_workflow_actions_for_assignments(assignments, doc)
+    create_workflow_actions_for_assignments(assignments, doc, priority=action_priority)
 
     if send_email_alert(workflow) and frappe.db.get_value(
         "PM Workflow Document State",
@@ -447,13 +460,13 @@ def get_users_next_action_data(transitions, doc):
     return user_data_map
 
 
-def create_workflow_actions_for_roles(roles, doc):
+def create_workflow_actions_for_roles(roles, doc, priority="Medium"):
     """Legacy: kept for backward compatibility. Wraps the new assignment-aware function."""
     assignments = [(at, ap, None, None) for at, ap in roles]
-    create_workflow_actions_for_assignments(assignments, doc)
+    create_workflow_actions_for_assignments(assignments, doc, priority=priority)
 
 
-def create_workflow_actions_for_assignments(assignments, doc):
+def create_workflow_actions_for_assignments(assignments, doc, priority="Medium"):
     """
     Create PM Workflow Action records from resolved assignments.
 
@@ -471,6 +484,7 @@ def create_workflow_actions_for_assignments(assignments, doc):
             "reference_name": doc.get("name"),
             "workflow_state": get_doc_workflow_state(doc),
             "status": "Open",
+            "priority": priority or "Medium",
             # Store the matrix-resolved user if any (first assignment wins for the header)
             "assigned_to": next((a[2] for a in assignments if a[2]), None),
             "for_submitter": next((a[3] for a in assignments if a[3]), None),
@@ -484,6 +498,55 @@ def create_workflow_actions_for_assignments(assignments, doc):
         )
 
     action.insert(ignore_permissions=True)
+    _push_inbox_notifications(assignments, doc)
+
+
+def _push_inbox_notifications(assignments, doc):
+    """
+    Push a Frappe Notification Log so approvers see the count badge in the bell.
+    Role-based: notify all users in the role (capped at 50 to avoid spam).
+    User-based: notify directly.
+    """
+    doctype = doc.get("doctype")
+    docname = doc.get("name")
+    subject = _("Approval pending: {0} {1}").format(doctype, docname)
+    from_user = frappe.session.user
+
+    notified = set()
+    for approver_type, approver, assigned_to, _fs in assignments:
+        if approver_type == "User" or assigned_to:
+            target = assigned_to or approver
+            if target and target not in notified and frappe.db.exists("User", target):
+                notified.add(target)
+        elif approver_type == "Role":
+            users = frappe.db.get_all(
+                "Has Role",
+                filters={"role": approver, "parenttype": "User"},
+                pluck="parent",
+                limit=50,
+            )
+            for u in users:
+                notified.add(u)
+
+    for user in notified:
+        if user in ("Administrator", "Guest", from_user):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Notification Log",
+                "subject": subject,
+                "for_user": user,
+                "document_type": doctype,
+                "document_name": docname,
+                "type": "Alert",
+                "from_user": from_user,
+                "email_content": _(
+                    "A new approval is waiting for you in your "
+                    "<a href='/app/pm-approval-inbox'>Approval Inbox</a>."
+                ),
+            }).insert(ignore_permissions=True)
+        except Exception:
+            pass
 
 
 def send_workflow_action_email(doc, transitions):

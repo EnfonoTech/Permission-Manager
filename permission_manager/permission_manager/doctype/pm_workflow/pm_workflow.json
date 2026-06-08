@@ -22,6 +22,10 @@
   "cost_center",
   "dimension_col_break",
   "project",
+  "sla_section",
+  "reminder_after_days",
+  "escalate_after_days",
+  "escalation_email",
   "states_head",
   "states",
   "transition_rules",
@@ -157,6 +161,33 @@
    "fieldname": "allow_descendants",
    "fieldtype": "Check",
    "label": "Allow Descendants"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sla_section",
+   "fieldtype": "Section Break",
+   "label": "SLA & Reminders"
+  },
+  {
+   "default": "3",
+   "description": "Send a reminder email to the approver after this many days of inaction. 0 = disabled.",
+   "fieldname": "reminder_after_days",
+   "fieldtype": "Int",
+   "label": "Reminder After (days)"
+  },
+  {
+   "default": "7",
+   "description": "Escalate to the manager or escalation email after this many days. 0 = disabled.",
+   "fieldname": "escalate_after_days",
+   "fieldtype": "Int",
+   "label": "Escalate After (days)"
+  },
+  {
+   "description": "Email address to notify on escalation (in addition to the approver's manager).",
+   "fieldname": "escalation_email",
+   "fieldtype": "Data",
+   "label": "Escalation Email",
+   "options": "Email"
   }
  ],
  "icon": "fa fa-random",
