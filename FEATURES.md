@@ -236,6 +236,221 @@ frappe.session.user == "ceo@co.com"  # actor-specific gate
 
 ---
 
+### Complete Example: Purchase Invoice — 2-level approval with ad-hoc
+
+#### Scenario
+
+- All Purchase Invoices go to the submitter's direct manager (Level 1) first
+- Invoices above ₹50,000 also require Finance Head approval (Level 2)
+- Occasionally, a manager wants a senior colleague to review before signing (ad-hoc)
+
+#### Workflow States (create in Workflow State)
+
+| Name | Style |
+|---|---|
+| Draft | Warning |
+| Pending L1 Approval | Warning |
+| Pending L2 Approval | Warning |
+| Approved | Success |
+| Rejected | Danger |
+
+#### Workflow Actions (create in Workflow Action Master)
+
+`Submit for Approval`, `Approve`, `Reject`, `Return for Correction`
+
+#### PM Workflow — Transitions tab
+
+| # | From State | Action | Next State | Condition | Use Matrix | Level | Fallback Role | Require Comment |
+|---|---|---|---|---|---|---|---|---|
+| 1 | Draft | Submit for Approval | Pending L1 Approval | — | ☐ | — | — | ☐ |
+| 2 | Pending L1 Approval | Approve | Approved | `doc.grand_total <= 50000` | ✅ | 1 | Purchase Manager | ☐ |
+| 3 | Pending L1 Approval | Approve | Pending L2 Approval | `doc.grand_total > 50000` | ✅ | 1 | Purchase Manager | ☐ |
+| 4 | Pending L1 Approval | Reject | Rejected | — | ✅ | 1 | Purchase Manager | ✅ |
+| 5 | Pending L1 Approval | Return for Correction | Draft | — | ✅ | 1 | Purchase Manager | ✅ |
+| 6 | Pending L2 Approval | Approve | Approved | — | ✅ | 2 | Accounts Manager | ☐ |
+| 7 | Pending L2 Approval | Reject | Rejected | — | ✅ | 2 | Accounts Manager | ✅ |
+
+> Rows 2 and 3 have the same *From State* and *Action* but different conditions — PM Workflow evaluates both and fires whichever condition is true. If the amount is ≤ 50,000, row 2 fires (direct approval). If > 50,000, row 3 fires (escalates to L2).
+
+#### Employee Approval Chain setup (for the submitter, e.g. Ravi)
+
+| Level | Approver | Scope |
+|---|---|---|
+| 1 | khalid@co.com | All DocTypes |
+| 2 | finance@co.com | Specific DocType: Purchase Invoice |
+
+#### End-to-end flow
+
+```
+Ravi saves a Purchase Invoice (₹30,000)
+  → Pending L1 Approval
+  → Action created for Khalid (Level 1, from Approval Chain)
+  → Khalid approves → condition: 30,000 ≤ 50,000 → Approved ✅
+
+Ravi saves another Purchase Invoice (₹80,000)
+  → Pending L1 Approval
+  → Action created for Khalid
+  → Khalid approves → condition: 80,000 > 50,000 → Pending L2 Approval
+  → Action created for Finance Head (Level 2)
+  → Finance Head approves → Approved ✅
+
+  [Ad-hoc scenario]
+  → Khalid is unsure, clicks ⇢ Forward → picks Sara (CFO)
+  → Khalid's action marked Forwarded; Sara gets ad-hoc action in her inbox
+  → Sara approves → workflow continues as if Khalid approved (moves to L2 or Approved)
+```
+
+#### Return for Correction flow
+
+```
+Ravi submits invoice with wrong tax
+  → Pending L1 Approval
+  → Khalid clicks "Return for Correction" (comment required: "GST rate wrong")
+  → Invoice goes back to Draft; Ravi gets notification
+  → Ravi fixes and re-submits → cycle restarts from Pending L1 Approval
+```
+
+---
+
+### Routing by Role, Department, or User
+
+PM Workflow transitions support three approver types. Mix and match within the same workflow:
+
+| Approver Type | When to use | How to configure |
+|---|---|---|
+| **User (via Approver Matrix)** | Route to a specific named person per submitter | Tick `Use Approver Matrix`; fill the submitter's Employee Approval Chain |
+| **Role** | Route to whoever holds a role (any member can approve) | Set `Approver Type = Role`, `Allowed = Finance Manager` |
+| **User (fixed)** | Always route to the same person regardless of submitter | Set `Approver Type = User`, `Allowed = cfo@co.com` |
+
+**Department-wise routing** — combine a Role approver with a condition that checks the submitter's department:
+
+```python
+# Transition condition — only fires if the submitter is in Operations
+frappe.db.get_value("Employee", {"user_id": frappe.session.user}, "department") == "Operations"
+```
+
+Create one transition per department, each with its matching condition and the appropriate Role or User for that department.
+
+**Example — department-specific Finance approver:**
+
+| From State | Action | Next State | Condition | Approver Type | Allowed |
+|---|---|---|---|---|---|
+| Pending | Approve | Approved | `frappe.db.get_value("Employee", {"user_id": doc.owner}, "department") == "Operations"` | Role | Operations Head |
+| Pending | Approve | Approved | `frappe.db.get_value("Employee", {"user_id": doc.owner}, "department") == "Sales"` | Role | Sales Head |
+| Pending | Approve | Approved | *(no condition — fallback for all other depts)* | Role | Department Manager |
+
+---
+
+### Example: Employee Exit Clearance (Relieving)
+
+When an employee is relieving, multiple departments must sign off before the exit is complete. This is a sequential multi-department clearance — not a simple approval chain.
+
+#### Doctype used
+
+`hr_suite` already has an **Exit Clearance** doctype with per-department checkboxes:
+
+| Checkbox field | Department responsible |
+|---|---|
+| `handover_completed` | Reporting Manager |
+| `access_revoked` | IT |
+| `assets_returned` | Admin |
+| `payroll_closed` + `eosb_completed` | Finance |
+| `final_attendance_verified` + `annual_leave_disbursement_completed` + `exit_interview_completed` | HR |
+
+The doctype auto-calculates `clearance_percentage` and sets `status = Cleared` when all boxes are ticked.
+
+> **No code changes needed.** PM Workflow is wired on top of Exit Clearance purely through configuration. When you save the PM Workflow, the `workflow_state` field is auto-created on Exit Clearance.
+
+#### Scenario
+
+HR creates an Exit Clearance for Ravi (leaving employee). Each department gets it in their My Approvals inbox in sequence, ticks their checkbox(es), and clicks "Clear".
+
+#### PM Workflow setup
+
+**Document Type:** `Exit Clearance`
+**Workflow State Field:** `workflow_state` *(auto-created on save)*
+
+#### Workflow States
+
+| Name | Style |
+|---|---|
+| Draft | Warning |
+| Manager Clearance Pending | Warning |
+| IT Clearance Pending | Warning |
+| Assets Clearance Pending | Warning |
+| Finance Clearance Pending | Warning |
+| HR Clearance Pending | Warning |
+| Cleared | Success |
+| Rejected | Danger |
+
+#### Transitions tab
+
+| From State | Action | Next State | Use Matrix | Level | Approver Type | Allowed | Require Comment |
+|---|---|---|---|---|---|---|---|
+| Draft | Initiate | Manager Clearance Pending | ☐ | — | Role | HR Manager | ☐ |
+| Manager Clearance Pending | Clear | IT Clearance Pending | ✅ | 1 | — | — | ☐ |
+| Manager Clearance Pending | Reject | Rejected | ✅ | 1 | — | — | ✅ |
+| IT Clearance Pending | Clear | Assets Clearance Pending | ☐ | — | Role | IT Manager | ☐ |
+| IT Clearance Pending | Reject | Rejected | ☐ | — | Role | IT Manager | ✅ |
+| Assets Clearance Pending | Clear | Finance Clearance Pending | ☐ | — | Role | Admin Manager | ☐ |
+| Assets Clearance Pending | Reject | Rejected | ☐ | — | Role | Admin Manager | ✅ |
+| Finance Clearance Pending | Clear | HR Clearance Pending | ☐ | — | Role | Accounts Manager | ☐ |
+| Finance Clearance Pending | Reject | Rejected | ☐ | — | Role | Accounts Manager | ✅ |
+| HR Clearance Pending | Clear | Cleared | ☐ | — | Role | HR Manager | ☐ |
+| HR Clearance Pending | Reject | Rejected | ☐ | — | Role | HR Manager | ✅ |
+
+> **Manager step** uses `Use Approver Matrix = ✅, Level = 1` — resolves to Ravi's direct manager from his Employee Approval Chain. All other steps are Role-based so any team member holding that role can act.
+
+#### End-to-end flow
+
+```
+HR creates Exit Clearance for Ravi
+  → workflow_state = "Draft"
+  → HR clicks "Initiate" → Manager Clearance Pending
+
+Ravi's manager (Khalid) sees it in My Approvals inbox
+  → Opens record → ticks "Handover Completed" → clicks "Clear"
+  → workflow_state = "IT Clearance Pending"
+
+IT Manager sees it in inbox
+  → ticks "Access Revoked" → clicks "Clear"
+  → workflow_state = "Assets Clearance Pending"
+
+Admin Manager sees it in inbox
+  → ticks "Assets Returned" → clicks "Clear"
+  → workflow_state = "Finance Clearance Pending"
+
+Accounts Manager sees it in inbox
+  → ticks "Payroll Closed" + "EOSB Completed" → clicks "Clear"
+  → workflow_state = "Finance Clearance Pending" → "HR Clearance Pending"
+
+HR Manager sees it in inbox
+  → ticks remaining 3 checkboxes → clicks "Clear"
+  → clearance_percentage = 100% → status auto-sets to "Cleared" ✅
+  → HR then processes Full and Final Settlement separately
+```
+
+#### Key design decisions
+
+| Decision | Reason |
+|---|---|
+| Use Exit Clearance from hr_suite, not a new doctype | Doctype already exists with the right fields and auto-percentage logic |
+| Full and Final Settlement stays separate | It's an HR-internal financial document — other departments don't need access to it |
+| Sequential states, not parallel | Each department completes before the next begins — assets can't clear before IT access is revoked |
+| Role-based from IT onwards | Any team member with the role can act; no single-person bottleneck if someone is absent |
+| Rejection ends at Rejected | HR reopens a fresh cycle if a step is disputed; avoids infinite correction loops |
+| workflow_state auto-created | PM Workflow creates the custom field on Exit Clearance automatically when saved — no manual setup |
+
+#### Ad-hoc use case
+
+Finance needs the CFO to verify a settlement amount before clearing:
+
+- Accounts Manager clicks **⇢ Forward → CFO** in inbox
+- CFO reviews, clicks "Clear" → Finance Clearance moves to HR Clearance Pending
+- Normal flow continues
+
+---
+
 ## 4. Admin Reassignment
 
 ### What it does
@@ -359,6 +574,61 @@ With the feature on, list views show each user only:
 - Records where they were a previous approver
 
 HR Managers, HR Users, and System Managers always see all records.
+
+### Limitations of the built-in multi-level HR chain
+
+The built-in chain always follows `Reports To` — it cannot route differently by role, department, or leave type. For more control, use the **PM Workflow engine** on Leave Application instead (or in addition).
+
+### Advanced leave routing with PM Workflow
+
+When you need **role-wise, department-wise, or conditional** routing for leave, set up a PM Workflow on the `Leave Application` doctype rather than relying solely on the built-in chain.
+
+#### Example — route by leave type
+
+Long leaves (> 5 days) require HR Head approval in addition to the direct manager:
+
+| From State | Action | Next State | Condition | Approver Type | Allowed |
+|---|---|---|---|---|---|
+| Draft | Apply | Manager Approval Pending | — | User (Matrix) | Level 1 |
+| Manager Approval Pending | Approve | Approved | `doc.total_leave_days <= 5` | User (Matrix) | Level 1 |
+| Manager Approval Pending | Approve | HR Approval Pending | `doc.total_leave_days > 5` | User (Matrix) | Level 1 |
+| Manager Approval Pending | Reject | Rejected | — | User (Matrix) | Level 1 |
+| HR Approval Pending | Approve | Approved | — | Role | HR Manager |
+| HR Approval Pending | Reject | Rejected | — | Role | HR Manager |
+
+#### Example — route by department
+
+Operations employees need department head sign-off; all others go directly to HR:
+
+| From State | Action | Next State | Condition | Approver Type | Allowed |
+|---|---|---|---|---|---|
+| Draft | Apply | Dept Head Pending | `frappe.db.get_value("Employee", {"user_id": doc.owner}, "department") == "Operations"` | Role | Operations Manager |
+| Draft | Apply | HR Approval Pending | `frappe.db.get_value("Employee", {"user_id": doc.owner}, "department") != "Operations"` | Role | HR Manager |
+| Dept Head Pending | Approve | HR Approval Pending | — | Role | Operations Manager |
+| Dept Head Pending | Reject | Rejected | — | Role | Operations Manager |
+| HR Approval Pending | Approve | Approved | — | Role | HR Manager |
+| HR Approval Pending | Reject | Rejected | — | Role | HR Manager |
+
+#### Example — user-specific approver (named person regardless of role)
+
+If a particular senior employee always needs the MD to approve their leave personally:
+
+| From State | Action | Next State | Condition | Approver Type | Allowed |
+|---|---|---|---|---|---|
+| Draft | Apply | MD Approval Pending | `doc.owner == "senior@co.com"` | User | md@co.com |
+| Draft | Apply | Manager Approval Pending | `doc.owner != "senior@co.com"` | User (Matrix) | Level 1 |
+| MD Approval Pending | Approve | Approved | — | User | md@co.com |
+| ... | ... | ... | ... | ... | ... |
+
+#### Choosing between built-in chain and PM Workflow for leave
+
+| Need | Use |
+|---|---|
+| Simple hierarchy following `Reports To` for all employees | Built-in multi-level HR approval |
+| Different approval paths by leave type, duration, or department | PM Workflow on Leave Application |
+| Named user approval for a specific employee | PM Workflow with User approver + condition |
+| Ad-hoc forwarding during leave approval | PM Workflow (built-in chain has no forward feature) |
+| Inbox visibility across all doc types in one place | PM Workflow (shows in My Approvals inbox) |
 
 ---
 
