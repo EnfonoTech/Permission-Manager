@@ -2341,7 +2341,8 @@
 .ps-ai-holder-name { font-weight: 500; color: var(--text-color); }
 .ps-ai-holder-role { font-style: italic; font-size: 11px; }
 
-// ─── History tab status badges ──────────────────────────────────────────────
-.ps-ai-hist-status { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
-.ps-ai-hist-done   { background: #dcfce7; color: #16a34a; }
-.ps-ai-hist-open   { background: #fef9c3; color: #92400e; }
+// ─── History tab state badges ───────────────────────────────────────────────
+// "Approved At State" badge — muted grey to show the past state
+.ps-ai-state-badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; background: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-color); }
+// "Current State" badge — teal to show where the doc stands now
+.ps-ai-state-current { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; }

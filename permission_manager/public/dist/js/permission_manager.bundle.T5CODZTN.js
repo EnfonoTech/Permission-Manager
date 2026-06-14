@@ -19,6 +19,296 @@
   };
   var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
+  // ../permission_manager/permission_manager/public/js/pm_workflow.js
+  $(document).on("form-refresh", function(event, frm) {
+    if (!frm || !frm.doctype)
+      return;
+    if (frm.doc.__islocal)
+      return;
+    try {
+      frappe.call({
+        method: "permission_manager.permission_manager.workflow.get_workflow_info",
+        args: { doc: frm.doc },
+        callback(res) {
+          var _a, _b;
+          if (!((_a = res == null ? void 0 : res.message) == null ? void 0 : _a.workflow) && !((_b = res == null ? void 0 : res.message) == null ? void 0 : _b.current_state))
+            return;
+          const workflow = res.message.workflow;
+          const workflow_name = res.message.workflow.name;
+          const current_state = res.message.current_state;
+          if (!res.message.allow_edit) {
+            frm.set_read_only(true);
+          }
+          if (workflow_name) {
+            frm.page.clear_primary_action();
+            if (!workflow.override_status) {
+              _override_document_status(frm, current_state, workflow.workflow_state_field);
+            }
+            _load_allowed_transitions(frm, workflow, current_state);
+            _load_pending_approver_info(frm);
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Permission Manager: Error initialising PM Workflow:", err);
+    }
+  });
+  function _check_mandatory(frm) {
+    const skip_types = ["Section Break", "Column Break", "Tab Break", "HTML", "Heading", "Fold", "Button"];
+    const skip_fields = ["name", "owner", "modified_by", "creation", "modified", "docstatus", "idx"];
+    const missing = [];
+    (frm.fields || []).forEach((f) => {
+      const df = f && f.df;
+      if (!df || !df.reqd)
+        return;
+      if (skip_types.includes(df.fieldtype))
+        return;
+      if (skip_fields.includes(df.fieldname))
+        return;
+      if (df.hidden || df.read_only)
+        return;
+      if (f.disp_status === "None")
+        return;
+      const val = frm.doc[df.fieldname];
+      if (val === void 0 || val === null || val === "") {
+        missing.push(__(df.label || df.fieldname));
+      }
+    });
+    if (missing.length) {
+      frappe.msgprint({
+        title: __("Mandatory Fields Required"),
+        message: __("Please fill in the following required fields:") + "<br><ul><li>" + missing.join("</li><li>") + "</li></ul>",
+        indicator: "red"
+      });
+      return false;
+    }
+    return true;
+  }
+  function _load_allowed_transitions(frm, workflow, current_state) {
+    frappe.call({
+      method: "permission_manager.permission_manager.workflow.get_transitions",
+      args: { doc: frm.doc, workflow: workflow.name, current_state },
+      callback(r) {
+        const transitions = r.message || [];
+        frm.page.clear_actions_menu();
+        if (!transitions.length)
+          return;
+        transitions.forEach((t) => {
+          frm.page.add_action_item(__(t.action), function() {
+            frm.selected_workflow_action = t.action;
+            if (!_check_mandatory(frm))
+              return;
+            _open_comment_dialog(frm, t);
+          });
+        });
+        _add_workflow_help_action(frm, transitions, current_state);
+      }
+    });
+  }
+  function _load_pending_approver_info(frm) {
+    if (frm.doc.docstatus !== 0)
+      return;
+    frappe.call({
+      method: "permission_manager.permission_manager.workflow.get_pending_workflow_action",
+      args: { doctype: frm.doctype, docname: frm.doc.name },
+      callback(r) {
+        const action = r.message;
+        if (!action)
+          return;
+        const assigned_to = action.assigned_to;
+        const assigned_name = action.assigned_to_name || assigned_to;
+        if (assigned_to) {
+          if (!frm.$wrapper.find(".pm-approver-info").length) {
+            const $info = $(`
+						<div class="pm-approver-info">
+							${frappe.utils.icon("users", "xs")}
+							<span>${__("Pending approval from:")}</span>
+							<strong class="pm-approver-name">${frappe.utils.escape_html(assigned_name)}</strong>
+						</div>
+					`);
+            frm.$wrapper.find(".page-head").after($info);
+          } else {
+            frm.$wrapper.find(".pm-approver-name").text(assigned_name);
+          }
+        }
+        if (frappe.user.has_role(["System Manager", "HR Manager"])) {
+          frm.remove_custom_button(__("Reassign Approver"));
+          frm.add_custom_button(__("Reassign Approver"), () => {
+            _show_reassign_dialog(frm, action);
+          }, __("Workflow"));
+        }
+      }
+    });
+  }
+  function _show_reassign_dialog(frm, current_action) {
+    const dlg = new frappe.ui.Dialog({
+      title: __("Reassign Approver"),
+      fields: [
+        {
+          fieldtype: "HTML",
+          fieldname: "current_info",
+          options: current_action.assigned_to ? `<div class="pm-reassign-current">
+						<strong>${__("Current Approver")}:</strong>
+						${frappe.utils.escape_html(current_action.assigned_to_name || current_action.assigned_to)}
+					   </div>` : `<div class="pm-reassign-current">${__("Currently routed by role (no specific user assigned).")}</div>`
+        },
+        {
+          fieldtype: "Link",
+          fieldname: "new_approver",
+          label: __("Reassign To"),
+          options: "User",
+          reqd: 1,
+          filters: { enabled: 1 },
+          description: __("This user will receive the pending approval notification.")
+        },
+        {
+          fieldtype: "Small Text",
+          fieldname: "reason",
+          label: __("Reason"),
+          description: __("Optional. Added as a comment on the document.")
+        }
+      ],
+      primary_action_label: __("Reassign"),
+      primary_action(vals) {
+        dlg.hide();
+        frappe.call({
+          method: "permission_manager.permission_manager.workflow.reassign_workflow_approver",
+          args: {
+            doctype: frm.doctype,
+            docname: frm.doc.name,
+            new_approver: vals.new_approver,
+            reason: vals.reason || ""
+          },
+          callback(r) {
+            var _a;
+            if ((_a = r.message) == null ? void 0 : _a.success) {
+              frappe.show_alert({
+                message: __("Approver reassigned to {0}.", [vals.new_approver]),
+                indicator: "green"
+              });
+              frm.reload_doc();
+            }
+          }
+        });
+      }
+    });
+    dlg.show();
+  }
+  function _add_workflow_help_action(frm, transitions, current_state) {
+    try {
+      frm.page.add_action_item(__("Workflow Help"), function() {
+        const state = current_state || __("Unknown");
+        const next_actions = transitions.length ? transitions.map((d) => `${d.action.bold()} (${d.allowed || __("matrix")})`).join(", ") : __("None \u2014 End of Workflow").bold();
+        new frappe.ui.Dialog({
+          title: __("Workflow: {0}", [frm.doctype]),
+          fields: [
+            {
+              fieldtype: "HTML",
+              fieldname: "info",
+              options: `
+							<p>${__("Current status")}: ${state.bold()}</p>
+							<p>${__("Next actions")}: ${next_actions}</p>
+							<p>${__("Only authorised users can perform these transitions.")}</p>
+						`
+            }
+          ]
+        }).show();
+      });
+    } catch (err) {
+      console.warn("Permission Manager: Failed to add Workflow Help action:", err);
+    }
+  }
+  function _override_document_status(frm, current_state, workflow_state_field) {
+    var _a, _b, _c, _d;
+    try {
+      const doc = frm.doc;
+      const doctype = frm.doctype;
+      if (!doc || !doctype)
+        return;
+      const meta = frappe.get_meta(doctype);
+      const is_submittable = meta == null ? void 0 : meta.is_submittable;
+      if (doc.__unsaved) {
+        (_b = (_a = frm.page).set_indicator) == null ? void 0 : _b.call(_a, __("Not Saved"), "orange");
+        return;
+      }
+      if (current_state) {
+        frappe.call({
+          method: "frappe.client.get_value",
+          args: { doctype: "Workflow State", fieldname: "style", filters: { name: current_state } },
+          callback(r) {
+            var _a2, _b2, _c2;
+            const color_map = {
+              Success: "green",
+              Warning: "orange",
+              Danger: "red",
+              Primary: "blue",
+              Inverse: "black",
+              Info: "light-blue"
+            };
+            const color = color_map[(_a2 = r == null ? void 0 : r.message) == null ? void 0 : _a2.style] || "gray";
+            (_c2 = (_b2 = frm.page).set_indicator) == null ? void 0 : _c2.call(_b2, __(current_state), color, `${workflow_state_field},=,${current_state}`);
+          }
+        });
+        return;
+      }
+      if (is_submittable) {
+        const m = { 0: ["Draft", "red"], 1: ["Submitted", "blue"], 2: ["Cancelled", "red"] };
+        const [label, color] = m[doc.docstatus] || ["Unknown", "gray"];
+        (_d = (_c = frm.page).set_indicator) == null ? void 0 : _d.call(_c, __(label), color, `docstatus,=,${doc.docstatus}`);
+      }
+    } catch (err) {
+      console.warn("Permission Manager: Failed to override document status:", err);
+    }
+  }
+  function _open_comment_dialog(frm, transition) {
+    const require_comment = !!transition.require_comment;
+    const d = new frappe.ui.Dialog({
+      title: __("Workflow Action: {0}", [transition.action]),
+      fields: [
+        {
+          fieldtype: "Select",
+          fieldname: "priority",
+          label: __("Priority"),
+          options: ["Low", "Medium", "High", "Critical"].join("\n"),
+          default: "Medium"
+        },
+        {
+          fieldtype: "Small Text",
+          fieldname: "comment",
+          label: __("Comment"),
+          reqd: require_comment,
+          description: require_comment ? __("A comment is required for this transition.") : __("Optional")
+        }
+      ],
+      primary_action_label: __("Apply"),
+      primary_action(values) {
+        if (require_comment && !values.comment) {
+          frappe.msgprint(__("Comment is required."));
+          return;
+        }
+        d.hide();
+        _apply_workflow_with_comment(frm, transition.action, values.comment, values.priority);
+      }
+    });
+    d.show();
+  }
+  function _apply_workflow_with_comment(frm, action, comment, priority) {
+    frappe.dom.freeze();
+    frappe.xcall("permission_manager.permission_manager.workflow.apply_workflow", {
+      doc: frm.doc,
+      action,
+      comment,
+      priority: priority || "Medium"
+    }).then((doc) => {
+      frappe.model.sync(doc);
+      frm.refresh();
+      frappe.show_alert({
+        message: __("Workflow action applied: {0}", [action]),
+        indicator: "green"
+      });
+    }).finally(() => frappe.dom.unfreeze());
+  }
+
   // ../permission_manager/permission_manager/public/js/utils/helpers.js
   var MATRIX_RIGHTS = [
     "select",
@@ -2508,24 +2798,21 @@
                             <th>${__("Date")}</th>
                             <th>${__("Transaction")}</th>
                             <th>${__("#")}</th>
-                            <th>${__("State")}</th>
-                            <th>${__("Status")}</th>
+                            <th>${__("Approved At State")}</th>
+                            <th>${__("Current State")}</th>
                             <th>${__("Actioned By")}</th>
                             <th>${__("Via Role")}</th>
                         </tr></thead>
                         <tbody>
-                        ${rows.map((row) => {
-            const status_cls = row.status === "Completed" ? "ps-ai-hist-done" : "ps-ai-hist-open";
-            return `<tr>
+                        ${rows.map((row) => `<tr>
                                 <td>${esc(row.date)}</td>
                                 <td>${esc(row.doctype)}</td>
                                 <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
-                                <td><span class="ps-ai-state-badge">${esc(row.state)}</span></td>
-                                <td><span class="ps-ai-hist-status ${status_cls}">${esc(__(row.status || "Open"))}</span></td>
+                                <td><span class="ps-ai-state-badge">${esc(row.action_state || "\u2014")}</span></td>
+                                <td><span class="ps-ai-state-badge ps-ai-state-current">${esc(row.current_state || "\u2014")}</span></td>
                                 <td>${esc(row.completed_by || "\u2014")}</td>
                                 <td>${esc(row.role || "\u2014")}</td>
-                            </tr>`;
-          }).join("")}
+                            </tr>`).join("")}
                         </tbody>
                     </table>
                     </div>
@@ -4718,4 +5005,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.YIL6UMK2.js.map
+//# sourceMappingURL=permission_manager.bundle.T5CODZTN.js.map

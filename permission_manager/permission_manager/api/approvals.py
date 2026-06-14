@@ -262,32 +262,31 @@ def get_my_approval_history(limit: int = 200) -> list:
     """
     user = frappe.session.user
 
-    # All completed actions where I was the approver
+    # Completed actions where I was the approver
     as_approver = frappe.get_all(
         "PM Workflow Action",
         filters={"completed_by": user, "status": "Completed"},
         fields=[
             "name", "reference_doctype", "reference_name",
-            "workflow_state", "completed_by", "completed_by_role", "modified", "creation",
+            "workflow_state", "completed_by", "completed_by_role", "modified",
         ],
         order_by="modified desc",
         limit=int(limit),
     )
 
-    # All actions (open or completed) on documents I submitted
+    # Completed actions on documents I submitted (so submitters see approval history of their docs)
     as_submitter = frappe.get_all(
         "PM Workflow Action",
-        filters={"for_submitter": user},
+        filters={"for_submitter": user, "status": "Completed"},
         fields=[
             "name", "reference_doctype", "reference_name",
-            "workflow_state", "completed_by", "completed_by_role", "modified", "creation",
-            "status",
+            "workflow_state", "completed_by", "completed_by_role", "modified",
         ],
         order_by="modified desc",
         limit=int(limit),
     )
 
-    # Merge, deduplicate by name, sort newest first
+    # Merge, deduplicate, sort newest first
     seen = set()
     merged = []
     for r in as_approver + as_submitter:
@@ -304,12 +303,21 @@ def get_my_approval_history(limit: int = 200) -> list:
                 frappe.db.get_value("User", r.completed_by, "full_name")
                 or r.completed_by.split("@")[0]
             )
+        # Current doc state (what state the document is in NOW — after the action was completed)
+        current_doc_state = ""
+        try:
+            current_doc_state = frappe.db.get_value(
+                r.reference_doctype, r.reference_name, "workflow_state"
+            ) or ""
+        except Exception:
+            pass
+
         result.append({
             "name":              r.name,
             "doctype":           r.reference_doctype,
             "docname":           r.reference_name,
-            "state":             r.workflow_state,
-            "status":            getattr(r, "status", "Completed"),
+            "action_state":      r.workflow_state,      # state when action was CREATED
+            "current_state":     current_doc_state,     # state document is in NOW
             "role":              r.completed_by_role or ("Direct" if r.completed_by else "—"),
             "completed_by":      completed_by_name,
             "date":              frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),

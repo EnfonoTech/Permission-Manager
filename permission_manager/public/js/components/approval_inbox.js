@@ -654,24 +654,21 @@ export class ApprovalInbox {
                             <th>${__("Date")}</th>
                             <th>${__("Transaction")}</th>
                             <th>${__("#")}</th>
-                            <th>${__("State")}</th>
-                            <th>${__("Status")}</th>
+                            <th>${__("Approved At State")}</th>
+                            <th>${__("Current State")}</th>
                             <th>${__("Actioned By")}</th>
                             <th>${__("Via Role")}</th>
                         </tr></thead>
                         <tbody>
-                        ${rows.map((row) => {
-                            const status_cls = row.status === "Completed" ? "ps-ai-hist-done" : "ps-ai-hist-open";
-                            return `<tr>
+                        ${rows.map((row) => `<tr>
                                 <td>${esc(row.date)}</td>
                                 <td>${esc(row.doctype)}</td>
                                 <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
-                                <td><span class="ps-ai-state-badge">${esc(row.state)}</span></td>
-                                <td><span class="ps-ai-hist-status ${status_cls}">${esc(__(row.status || "Open"))}</span></td>
+                                <td><span class="ps-ai-state-badge">${esc(row.action_state || "—")}</span></td>
+                                <td><span class="ps-ai-state-badge ps-ai-state-current">${esc(row.current_state || "—")}</span></td>
                                 <td>${esc(row.completed_by || "—")}</td>
                                 <td>${esc(row.role || "—")}</td>
-                            </tr>`;
-                        }).join("")}
+                            </tr>`).join("")}
                         </tbody>
                     </table>
                     </div>

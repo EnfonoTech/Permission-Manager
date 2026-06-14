@@ -1,6 +1,9 @@
-// Permission Manager — Studio Bundle Entry
+// Permission Manager — Main Bundle
 // Author: siva <siva@enfono.com>
+// All JS (including pm_workflow) is bundled here so every build gets
+// a new content-hash filename — automatic cache busting in production.
 
+import "./pm_workflow";            // workflow action buttons on all doc forms
 import { MatrixView } from "./components/matrix_view";
 import { WhyExplainer } from "./components/why_explainer";
 import { UserExplorer } from "./components/user_explorer";

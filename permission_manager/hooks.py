@@ -35,7 +35,6 @@ add_to_apps_screen = [
 
 # ─── Desk-wide JS / CSS bundles ───────────────────────────────────────────────
 app_include_js = [
-    "/assets/permission_manager/js/pm_workflow.js",
     "permission_manager.bundle.js",
 ]
 app_include_css = ["permission_manager.bundle.css"]
