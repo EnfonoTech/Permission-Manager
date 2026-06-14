@@ -25,7 +25,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Open\nCompleted\nReassigned"
+   "options": "Open\nCompleted\nReassigned\nForwarded"
   },
   {
    "fieldname": "reference_name",
@@ -87,6 +87,21 @@
    "fieldtype": "Link",
    "label": "Completed By User",
    "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_adhoc",
+   "fieldtype": "Check",
+   "label": "Is Ad-hoc",
+   "default": "0",
+   "read_only": 1,
+   "in_list_view": 0
+  },
+  {
+   "fieldname": "adhoc_for",
+   "fieldtype": "Link",
+   "label": "Ad-hoc For",
+   "options": "PM Workflow Action",
    "read_only": 1
   },
   {

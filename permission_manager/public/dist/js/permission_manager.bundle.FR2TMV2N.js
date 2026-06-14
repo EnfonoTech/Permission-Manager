@@ -2454,6 +2454,14 @@
       });
       if (!act_html)
         act_html = `<span class="ps-ai-no-action text-muted">${__("No action")}</span>`;
+      if (!item.is_adhoc) {
+        act_html += `<button class="btn btn-xs btn-default ps-ai-fwd-btn"
+                data-name="${esc(item.name)}"
+                data-docname="${esc(item.docname)}"
+                title="${__("Forward to another approver")}">\u21E2</button>`;
+      } else {
+        act_html += `<span class="ps-ai-adhoc-badge" title="${__("Ad-hoc approval \u2014 forwarded to you")}">${__("Ad-hoc")}</span>`;
+      }
       act_html += `<a href="${esc(item.doc_url)}" target="_blank"
             class="btn btn-xs btn-default ps-ai-open-btn" title="${__("Open document")}">\u2192</a>`;
       const COL_COUNT = 11;
@@ -2519,6 +2527,10 @@
       $row.filter(".ps-ai-row").find(".ps-ai-act-btn").on("click", (e) => {
         const $btn = $(e.currentTarget);
         this._do_action($btn.data("doctype"), $btn.data("docname"), $btn.data("action"));
+      });
+      $row.filter(".ps-ai-row").find(".ps-ai-fwd-btn").on("click", (e) => {
+        const $btn = $(e.currentTarget);
+        this._do_forward($btn.data("name"), $btn.data("docname"));
       });
       $tbody.append($row);
     }
@@ -2695,6 +2707,55 @@
               frappe.dom.unfreeze();
               if ((_a = r.message) == null ? void 0 : _a.success) {
                 frappe.show_alert({ message: __("{0} \u2014 {1} applied.", [docname, action]), indicator: "green" });
+                this.load();
+              }
+            },
+            error: () => frappe.dom.unfreeze()
+          });
+        }
+      });
+      dlg.show();
+    }
+    _do_forward(action_name, docname) {
+      const dlg = new frappe.ui.Dialog({
+        title: __("Forward: {0}", [docname]),
+        fields: [
+          {
+            fieldtype: "HTML",
+            fieldname: "info",
+            options: `<p class="text-muted small">${__("The selected user will receive this action as an ad-hoc approver. Your action will be marked Forwarded.")}</p>`
+          },
+          {
+            fieldtype: "Link",
+            fieldname: "to_user",
+            label: __("Forward To"),
+            options: "User",
+            reqd: 1,
+            filters: { enabled: 1, user_type: "System User" }
+          },
+          {
+            fieldtype: "Small Text",
+            fieldname: "comment",
+            label: __("Note"),
+            description: __("Optional reason for forwarding.")
+          }
+        ],
+        primary_action_label: __("Forward"),
+        primary_action: (vals) => {
+          if (!vals.to_user) {
+            frappe.msgprint(__("Please select a user to forward to."));
+            return;
+          }
+          dlg.hide();
+          frappe.dom.freeze(__("Forwarding\u2026"));
+          frappe.call({
+            method: "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.forward_workflow_action",
+            args: { action_name, to_user: vals.to_user, comment: vals.comment || "" },
+            callback: (r) => {
+              var _a;
+              frappe.dom.unfreeze();
+              if ((_a = r.message) == null ? void 0 : _a.adhoc_action) {
+                frappe.show_alert({ message: __("{0} forwarded successfully.", [docname]), indicator: "green" });
                 this.load();
               }
             },
@@ -5005,4 +5066,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.T5CODZTN.js.map
+//# sourceMappingURL=permission_manager.bundle.FR2TMV2N.js.map

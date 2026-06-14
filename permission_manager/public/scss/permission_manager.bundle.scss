@@ -2346,3 +2346,23 @@
 .ps-ai-state-badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; background: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-color); }
 // "Current State" badge — teal to show where the doc stands now
 .ps-ai-state-current { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; }
+
+// ─── Forward / Ad-hoc styles ────────────────────────────────────────────────
+.ps-ai-fwd-btn {
+    font-size: 14px;
+    line-height: 1;
+    padding: 1px 6px;
+    color: var(--text-muted);
+    &:hover { color: var(--primary); }
+}
+.ps-ai-adhoc-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+    vertical-align: middle;
+}

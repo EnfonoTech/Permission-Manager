@@ -2,6 +2,7 @@
 
 **Author:** siva <siva@enfono.com>
 **App:** `permission_manager` | Module path: `permission_manager.permission_manager.*`
+**Version:** 1.0.0
 
 ---
 
@@ -11,12 +12,13 @@
 2. [Approver Delegation (OOO Cover)](#2-approver-delegation-ooo-cover)
 3. [PM Workflow Engine](#3-pm-workflow-engine)
 4. [Admin Reassignment](#4-admin-reassignment)
-5. [Multi-level HR Approval](#5-multi-level-hr-approval)
-6. [My Approvals Inbox](#6-my-approvals-inbox)
-7. [Permission Studio](#7-permission-studio)
-8. [Permission Audit Log](#8-permission-audit-log)
-9. [API Reference](#9-api-reference)
-10. [Troubleshooting](#10-troubleshooting)
+5. [Ad-hoc Forward to Approver](#5-ad-hoc-forward-to-approver)
+6. [Multi-level HR Approval](#6-multi-level-hr-approval)
+7. [My Approvals Inbox](#7-my-approvals-inbox)
+8. [Permission Studio](#8-permission-studio)
+9. [Permission Audit Log](#9-permission-audit-log)
+10. [API Reference](#10-api-reference)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
@@ -107,6 +109,8 @@ A more flexible alternative to Frappe's built-in workflow. Key additions:
 | Route to a specific named user | ✗ | ✓ via Approver Matrix |
 | Delegation / OOO cover | ✗ | ✓ |
 | Admin can reassign approver | ✗ | ✓ |
+| Ad-hoc forward to any user mid-flow | ✗ | ✓ |
+| Conditional transitions (amount, field value) | ✗ | ✓ |
 | Require comment on a transition | ✗ | ✓ |
 | Priority per approval step | ✗ | ✓ |
 | Return document for correction | ✗ | ✓ |
@@ -195,10 +199,22 @@ Ahmed saves a Purchase Order
 
 ### Additional options
 
-**Transition Conditions** — Python expression evaluated against `doc`:
+**Conditional Transitions** — Add a Python expression in the **Condition** field of any transition row. Only transitions whose condition evaluates to `True` are offered to the approver. The expression is evaluated against `doc` and has access to `frappe.db.get_value`, `frappe.db.get_list`, `frappe.session`, `frappe.utils`, etc.
+
 ```python
-doc.grand_total > 50000   # only require approval above this amount
+doc.grand_total > 50000        # only route through Finance for large invoices
+doc.department == "Operations" # department-specific path
+frappe.session.user == "ceo@co.com"  # actor-specific gate
 ```
+
+**Multi-path example (amount-based routing):**
+
+| From State | Action | Next State | Condition |
+|---|---|---|---|
+| Pending | Approve | Approved | `doc.grand_total <= 50000` |
+| Pending | Approve | Finance Review | `doc.grand_total > 50000` |
+| Finance Review | Approve | Approved | — |
+| Finance Review | Reject | Rejected | — |
 
 **Require Comment** — tick on any transition (e.g. Reject) to force the approver to type a reason before proceeding.
 
@@ -247,7 +263,63 @@ Lets a System Manager or HR Manager manually redirect a stuck approval to a diff
 
 ---
 
-## 5. Multi-level HR Approval
+## 5. Ad-hoc Forward to Approver
+
+### What it does
+
+Lets the current action holder forward a specific document to any other user for a one-time ad-hoc approval — without changing the PM Workflow definition. The workflow resumes its normal path once the ad-hoc approver acts.
+
+**When to use it:**
+- A document needs a one-time sign-off from someone outside the standard chain (e.g. a high-value invoice needs the CFO's eye before it reaches Finance)
+- The normal approver wants to delegate a specific document to a colleague
+- An ad-hoc review is needed that isn't worth encoding as a permanent workflow state
+
+**When NOT to use it:**
+- If the extra approval is always required → add a state to the PM Workflow definition instead
+- If an approver is on leave → use Approver Delegation (OOO cover) instead
+
+### How to use it
+
+1. Open **My Approvals** inbox (`/app/pm-approval-inbox`)
+2. On any pending row, click the **⇢** (Forward) button — visible only when the action is assigned to you
+3. A dialog appears:
+   - **Forward To** — pick any active System User
+   - **Note** — optional reason for forwarding
+4. Click **Forward**
+
+### What happens
+
+- Your action is marked **Forwarded** (disappears from your pending inbox)
+- A new **Open** action is created for the target user — they see it in their inbox with the same Approve / Reject buttons
+- The target user's inbox row shows an **Ad-hoc** amber badge so they know the origin
+- A comment is added to the document timeline: *"Forwarded to [Name] for ad-hoc approval"*
+- An email notification is sent to the target user
+
+### After the ad-hoc approver acts
+
+When the ad-hoc approver clicks Approve or Reject:
+- The workflow applies their action normally (same transitions as the original approver would have used)
+- The document moves to the next state
+- All Open and Forwarded actions from the previous state are automatically closed
+- Normal workflow continues from the new state
+
+### Restrictions
+
+- Only the user the action is **assigned to** can forward it (not just any role member)
+- An ad-hoc action cannot be forwarded again (no chaining)
+- System Managers can forward any action regardless of assignment
+
+### PM Workflow Action fields
+
+| Field | Purpose |
+|---|---|
+| `is_adhoc` | Marks this as a forwarded ad-hoc action (checkbox) |
+| `adhoc_for` | Link back to the original forwarded action |
+| Status: Forwarded | The original action's status while the ad-hoc action is pending |
+
+---
+
+## 6. Multi-level HR Approval
 
 ### What it does
 
@@ -290,7 +362,7 @@ HR Managers, HR Users, and System Managers always see all records.
 
 ---
 
-## 6. My Approvals Inbox
+## 7. My Approvals Inbox
 
 ### What it does
 
@@ -320,10 +392,11 @@ Each group shows a table with these columns:
 | Transaction | The DocType (e.g. Purchase Order) |
 | # | Document name — click to open it |
 | Role ID | The role through which you have permission (or "Direct" if assigned by name) |
+| With | Who currently holds the action (full name, or role if unassigned) |
 | Approval | Current workflow state of the document |
 | Days | Days waiting — turns amber after 7 days, red after 30 |
 | Creator | Full name of the person who submitted the document |
-| Actions | Approve / Reject buttons + → link to open the document |
+| Actions | Approve / Reject buttons + **⇢ Forward** button + → link to open the document |
 
 **Inline document preview** — click anywhere on a row (not on a button) to expand a mini-preview of the document's key fields directly in the inbox, without opening a new page. Fields are prioritised: `in_preview` fields first, then bold fields, then list-view fields. Technical and system fields (exchange rate, naming series, child tables, etc.) are hidden automatically.
 
@@ -359,12 +432,12 @@ Each group shows a table with these columns:
 | Tab | What it shows |
 |---|---|
 | **Pending** | All open approvals waiting for you (default view) |
-| **History** | Approvals you have already acted on (last 100), with the action taken and date |
+| **History** | Completed approvals only (last 200) — shows both actions you took as approver and actions on documents you submitted. Columns: Date, Transaction, #, Approved At State (the state when action was taken), Current State (where the document is now), Actioned By, Via Role |
 | **Analytics** | Summary tiles (open / completed / overdue), volume by DocType, pending by age, and top approvers by completions in the last 30 days |
 
 ---
 
-## 7. Permission Studio
+## 8. Permission Studio
 
 **Access:** `/app/permission-studio` — visible to **System Manager** role only.
 
@@ -470,7 +543,7 @@ Available in DocType View, Role View, and Role Comparison — click **Export CSV
 
 ---
 
-## 8. Permission Audit Log
+## 9. Permission Audit Log
 
 ### What it does
 
@@ -509,7 +582,7 @@ Every change made through Permission Studio is recorded in the **PM Permission L
 
 ---
 
-## 9. API Reference
+## 10. API Reference
 
 All methods are `@frappe.whitelist()`.
 
@@ -545,6 +618,17 @@ frappe.call({
 frappe.call({
     method: "permission_manager.permission_manager.api.approvals.get_approval_analytics"
 })
+
+// Forward a pending action to another user as ad-hoc approver
+frappe.call({
+    method: "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.forward_workflow_action",
+    args: {
+        action_name: "PM-WFA-00001",   // PM Workflow Action name
+        to_user: "ali@co.com",
+        comment: "Please review before I sign off"   // optional
+    }
+})
+// Returns: { adhoc_action: "PM-WFA-00002" }
 
 // Get permission audit log entries
 frappe.call({
@@ -724,7 +808,7 @@ frappe.call({
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Problem | Likely Cause | Fix |
 |---|---|---|
@@ -742,3 +826,6 @@ frappe.call({
 | Assets not loading after install | JS/CSS not built | Run `bench build --app permission_manager` |
 | Changes in Permission Studio not saving | Redis cache stale | Run `bench clear-cache` or hard-reload the browser |
 | ProgrammingError on PM Workflow table | `bench migrate` not run after install | Run `bench --site <site> migrate` |
+| ⇢ Forward button not visible | Action is not assigned directly to you (assigned via role) | Forward is only available when `assigned_to = current user`; System Managers can always forward |
+| Ad-hoc approver doesn't see the action | `is_adhoc` / `adhoc_for` columns missing (schema not migrated) | Run `bench --site <site> migrate` or manually add columns — see install notes |
+| Forwarded action still shows in inbox | Status not updated to Forwarded | Reload the inbox; if persisting, check that `forward_workflow_action` ran without error |

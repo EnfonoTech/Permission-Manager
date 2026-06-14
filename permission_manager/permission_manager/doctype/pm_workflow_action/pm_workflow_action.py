@@ -129,7 +129,7 @@ def process_workflow_actions(doc, state):
 
     current_state = get_doc_workflow_state(doc)
 
-    # Close every open action from a PREVIOUS state and stamp who triggered the transition.
+    # Close Open AND Forwarded actions from previous states, stamp who triggered the transition.
     _WA = DocType("PM Workflow Action")
     (
         frappe.qb.update(_WA)
@@ -138,7 +138,7 @@ def process_workflow_actions(doc, state):
         .where(
             (_WA.reference_doctype == doc.get("doctype"))
             & (_WA.reference_name == doc.get("name"))
-            & (_WA.status == "Open")
+            & (_WA.status.isin(["Open", "Forwarded"]))
             & (_WA.workflow_state != current_state)
         )
     ).run()
@@ -692,3 +692,85 @@ def get_state_optional_field_value(workflow_name, state):
         {"parent": workflow_name, "state": state},
         "is_optional_state",
     )
+
+
+@frappe.whitelist()
+def forward_workflow_action(action_name, to_user, comment=""):
+    """Forward an open PM Workflow Action to another user as an ad-hoc approver.
+
+    The original action is marked Forwarded; a new ad-hoc action is created for
+    to_user with the same state/doc. When the ad-hoc approver acts, the normal
+    workflow engine closes all Forwarded/Open actions from the old state.
+    """
+    action = frappe.get_doc("PM Workflow Action", action_name)
+
+    # Only the assigned user (or system manager) can forward
+    if action.assigned_to != frappe.session.user and "System Manager" not in frappe.get_roles():
+        frappe.throw(_("You can only forward actions assigned to you."), frappe.PermissionError)
+
+    if action.status != "Open":
+        frappe.throw(_("This action is no longer open and cannot be forwarded."))
+
+    to_user_exists = frappe.db.exists("User", to_user)
+    if not to_user_exists:
+        frappe.throw(_("User {0} not found.").format(to_user))
+
+    # Mark the original action as Forwarded
+    frappe.db.set_value("PM Workflow Action", action_name, {
+        "status": "Forwarded",
+        "completed_by": frappe.session.user,
+    }, update_modified=False)
+
+    # Create the ad-hoc action for the target user
+    adhoc = frappe.get_doc({
+        "doctype":           "PM Workflow Action",
+        "reference_doctype": action.reference_doctype,
+        "reference_name":    action.reference_name,
+        "workflow_state":    action.workflow_state,
+        "status":            "Open",
+        "is_adhoc":          1,
+        "adhoc_for":         action_name,
+        "assigned_to":       to_user,
+        "for_submitter":     action.for_submitter,
+        "priority":          action.priority or "Medium",
+    })
+    adhoc.insert(ignore_permissions=True)
+
+    # Add a comment on the referenced document
+    try:
+        ref_doc = frappe.get_doc(action.reference_doctype, action.reference_name)
+        forwarder_name = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
+        target_name    = frappe.db.get_value("User", to_user, "full_name") or to_user
+        msg = _("Forwarded to {0} for ad-hoc approval.").format(f"<b>{target_name}</b>")
+        if comment:
+            msg += f"<br><em>{frappe.utils.escape_html(comment)}</em>"
+        ref_doc.add_comment("Workflow", msg)
+    except Exception:
+        pass
+
+    # Notify the target user
+    try:
+        target_email = frappe.db.get_value("User", to_user, "email")
+        forwarder_name = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
+        if target_email:
+            frappe.sendmail(
+                recipients=[target_email],
+                subject=_("Action Required: {0} {1}").format(action.reference_doctype, action.reference_name),
+                message=_(
+                    "<p>{forwarder} has forwarded a <b>{doctype}</b> approval to you.</p>"
+                    "<p><b>Document:</b> {docname}<br><b>State:</b> {state}</p>"
+                    "{comment_block}"
+                    '<p><a href="{url}/app/pm-approval-inbox">Open My Approvals</a></p>'
+                ).format(
+                    forwarder=forwarder_name,
+                    doctype=action.reference_doctype,
+                    docname=action.reference_name,
+                    state=action.workflow_state or "",
+                    comment_block=f"<p><em>{frappe.utils.escape_html(comment)}</em></p>" if comment else "",
+                    url=frappe.utils.get_url(),
+                ),
+            )
+    except Exception:
+        pass
+
+    return {"adhoc_action": adhoc.name}

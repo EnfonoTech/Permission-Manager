@@ -81,6 +81,7 @@ def get_my_pending_approvals() -> dict:
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "assigned_to", "for_submitter", "creation", "priority",
+            "is_adhoc", "adhoc_for",
         ],
     )
     if not actions:
@@ -205,7 +206,7 @@ def get_my_pending_approvals() -> dict:
             "doctype":           doctype,
             "docname":           docname,
             "date":              frappe.utils.format_datetime(act.creation, "dd/MM/yy HH:mm"),
-            "creation_iso":      str(act.creation)[:10],  # YYYY-MM-DD for client-side filtering/sorting
+            "creation_iso":      str(act.creation)[:10],
             "priority":          priority,
             "state":             state,
             "role_id":           role_id,
@@ -215,6 +216,8 @@ def get_my_pending_approvals() -> dict:
             "category":          category,
             "available_actions": avail_actions,
             "doc_url":           f"/app/{_safe_slug(doctype)}/{docname}",
+            "is_adhoc":          bool(act.get("is_adhoc")),
+            "adhoc_for":         act.get("adhoc_for") or "",
         })
 
     # ── Step 6: sort within each category then group ────────────────────────────
