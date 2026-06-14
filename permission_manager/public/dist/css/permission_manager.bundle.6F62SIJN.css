@@ -1,4 +1,4 @@
-/* ../../../../../tmp/tmp-48845-zJcFc8tNpZ2i/permission_manager/permission_manager/public/scss/permission_manager.bundle.css */
+/* ../../../../../tmp/tmp-31510-cRm9RC63jKM1/permission_manager/permission_manager/public/scss/permission_manager.bundle.css */
 :root {
   --ps-primary: #6366f1;
   --ps-primary-light: #818cf8;
@@ -2795,4 +2795,16 @@
   opacity: 0.7;
   margin-left: 2px;
 }
-/*# sourceMappingURL=permission_manager.bundle.SZA7U5LZ.css.map */
+.ps-ai-col-holder {
+  min-width: 90px;
+  font-size: 12px;
+}
+.ps-ai-holder-name {
+  font-weight: 500;
+  color: var(--text-color);
+}
+.ps-ai-holder-role {
+  font-style: italic;
+  font-size: 11px;
+}
+/*# sourceMappingURL=permission_manager.bundle.6F62SIJN.css.map */

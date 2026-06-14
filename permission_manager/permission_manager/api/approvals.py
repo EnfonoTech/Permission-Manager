@@ -183,6 +183,14 @@ def get_my_pending_approvals() -> dict:
                 or creator_user.split("@")[0]
             )
 
+        # Holder — who this action is currently assigned to
+        holder = ""
+        if act.assigned_to:
+            holder = (
+                frappe.db.get_value("User", act.assigned_to, "full_name")
+                or act.assigned_to.split("@")[0]
+            )
+
         # Days waiting since action was created
         days = int((today_dt - act.creation).total_seconds() / 86400) if act.creation else 0
 
@@ -201,6 +209,7 @@ def get_my_pending_approvals() -> dict:
             "priority":          priority,
             "state":             state,
             "role_id":           role_id,
+            "holder":            holder,
             "days":              days,
             "creator":           creator,
             "category":          category,

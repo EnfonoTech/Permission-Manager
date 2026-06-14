@@ -2095,7 +2095,8 @@
                                 <th class="ps-ai-col-pri">${__("Priority")}</th>
                                 <th class="ps-ai-col-trans">${__("Transaction")}</th>
                                 <th class="ps-ai-col-num">${__("#")}</th>
-                                <th class="ps-ai-col-role">${__("Role ID")}</th>
+                                <th class="ps-ai-col-role">${__("Role")}</th>
+                                <th class="ps-ai-col-holder">${__("With")}</th>
                                 <th class="ps-ai-col-state">${__("Approval")}</th>
                                 <th class="ps-ai-col-days">${__("Days")}</th>
                                 <th class="ps-ai-col-creator">${__("Creator")}</th>
@@ -2165,7 +2166,7 @@
         act_html = `<span class="ps-ai-no-action text-muted">${__("No action")}</span>`;
       act_html += `<a href="${esc(item.doc_url)}" target="_blank"
             class="btn btn-xs btn-default ps-ai-open-btn" title="${__("Open document")}">\u2192</a>`;
-      const COL_COUNT = 10;
+      const COL_COUNT = 11;
       const $row = $(`
             <tr class="${row_class}"
                 data-name="${esc(item.name)}"
@@ -2190,6 +2191,9 @@
                     </a>
                 </td>
                 <td class="ps-ai-col-role">${esc(item.role_id)}</td>
+                <td class="ps-ai-col-holder">
+                    ${item.holder ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>` : `<span class="text-muted ps-ai-holder-role">${esc(item.role_id || "\u2014")}</span>`}
+                </td>
                 <td class="ps-ai-col-state">
                     <span class="ps-ai-state-badge">${esc(item.state)}</span>
                 </td>
@@ -4709,4 +4713,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.MQFVRIU7.js.map
+//# sourceMappingURL=permission_manager.bundle.SVRM4T7T.js.map

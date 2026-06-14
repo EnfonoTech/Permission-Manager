@@ -127,11 +127,27 @@ def process_workflow_actions(doc, state):
         clear_workflow_actions(doc.get("doctype"), doc.get("name"))
         return
 
+    current_state = get_doc_workflow_state(doc)
+
+    # Close every open action that belongs to a PREVIOUS state — avoids stale inbox rows
+    # when the document cycles through states (e.g., Pending → Rejected → Pending again).
+    frappe.db.set_value(
+        "PM Workflow Action",
+        {
+            "reference_doctype": doc.get("doctype"),
+            "reference_name":    doc.get("name"),
+            "status":            "Open",
+            "workflow_state":    ("!=", current_state),
+        },
+        "status", "Completed",
+        update_modified=False,
+    )
+
     if is_workflow_action_already_created(doc):
         return
 
     update_completed_workflow_actions(
-        doc, workflow=workflow, workflow_state=get_doc_workflow_state(doc)
+        doc, workflow=workflow, workflow_state=current_state
     )
     clear_doctype_notifications("PM Workflow Action")
 
@@ -603,12 +619,15 @@ def get_confirm_workflow_action_url(doc, action, user):
 
 
 def is_workflow_action_already_created(doc):
+    # Only block if an OPEN action already exists for this state —
+    # completed old actions (from a previous cycle) must not block re-creation.
     return frappe.db.exists(
         {
             "doctype": "PM Workflow Action",
             "reference_name": doc.get("name"),
             "reference_doctype": doc.get("doctype"),
             "workflow_state": get_doc_workflow_state(doc),
+            "status": "Open",
         }
     )
 
