@@ -253,29 +253,67 @@ def quick_apply_workflow_action(
 # ─── Approval history (what the current user has already acted on) ────────────
 
 @frappe.whitelist()
-def get_my_approval_history(limit: int = 100) -> list:
-    """Return recent PM Workflow Actions completed by the current user."""
+def get_my_approval_history(limit: int = 200) -> list:
+    """
+    Return workflow action history visible to the current user:
+    - Actions the current user personally completed (approver view)
+    - Actions completed on documents the current user submitted (submitter view)
+    - All open+completed actions where the user is a permitted approver
+    """
     user = frappe.session.user
-    rows = frappe.get_all(
+
+    # All completed actions where I was the approver
+    as_approver = frappe.get_all(
         "PM Workflow Action",
         filters={"completed_by": user, "status": "Completed"},
         fields=[
             "name", "reference_doctype", "reference_name",
-            "workflow_state", "completed_by_role", "modified",
+            "workflow_state", "completed_by", "completed_by_role", "modified", "creation",
         ],
         order_by="modified desc",
         limit=int(limit),
     )
+
+    # All actions (open or completed) on documents I submitted
+    as_submitter = frappe.get_all(
+        "PM Workflow Action",
+        filters={"for_submitter": user},
+        fields=[
+            "name", "reference_doctype", "reference_name",
+            "workflow_state", "completed_by", "completed_by_role", "modified", "creation",
+            "status",
+        ],
+        order_by="modified desc",
+        limit=int(limit),
+    )
+
+    # Merge, deduplicate by name, sort newest first
+    seen = set()
+    merged = []
+    for r in as_approver + as_submitter:
+        if r.name not in seen:
+            seen.add(r.name)
+            merged.append(r)
+    merged.sort(key=lambda x: x.modified, reverse=True)
+
     result = []
-    for r in rows:
+    for r in merged[:int(limit)]:
+        completed_by_name = ""
+        if r.completed_by:
+            completed_by_name = (
+                frappe.db.get_value("User", r.completed_by, "full_name")
+                or r.completed_by.split("@")[0]
+            )
         result.append({
-            "name":         r.name,
-            "doctype":      r.reference_doctype,
-            "docname":      r.reference_name,
-            "state":        r.workflow_state,
-            "role":         r.completed_by_role or "Direct",
-            "date":         frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),
-            "doc_url":      f"/app/{_safe_slug(r.reference_doctype)}/{r.reference_name}",
+            "name":              r.name,
+            "doctype":           r.reference_doctype,
+            "docname":           r.reference_name,
+            "state":             r.workflow_state,
+            "status":            getattr(r, "status", "Completed"),
+            "role":              r.completed_by_role or ("Direct" if r.completed_by else "—"),
+            "completed_by":      completed_by_name,
+            "date":              frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),
+            "doc_url":           f"/app/{_safe_slug(r.reference_doctype)}/{r.reference_name}",
         })
     return result
 

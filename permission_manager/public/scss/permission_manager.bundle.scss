@@ -2340,3 +2340,8 @@
 .ps-ai-col-holder { min-width: 90px; font-size: 12px; }
 .ps-ai-holder-name { font-weight: 500; color: var(--text-color); }
 .ps-ai-holder-role { font-style: italic; font-size: 11px; }
+
+// ─── History tab status badges ──────────────────────────────────────────────
+.ps-ai-hist-status { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.ps-ai-hist-done   { background: #dcfce7; color: #16a34a; }
+.ps-ai-hist-open   { background: #fef9c3; color: #92400e; }

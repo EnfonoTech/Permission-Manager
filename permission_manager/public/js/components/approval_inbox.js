@@ -640,11 +640,11 @@ export class ApprovalInbox {
 
         frappe.call({
             method: "permission_manager.permission_manager.api.approvals.get_my_approval_history",
-            args: { limit: 100 },
+            args: { limit: 200 },
             callback: (r) => {
                 const rows = r.message || [];
                 if (!rows.length) {
-                    $body.html(`<div class="ps-ai-empty"><h4>${__("No history yet.")}</h4></div>`);
+                    $body.html(`<div class="ps-ai-empty"><h4>${__("No approval history yet.")}</h4><p class="text-muted">${__("Actions appear here once approvals are processed on your documents.")}</p></div>`);
                     return;
                 }
                 const html = `
@@ -654,19 +654,24 @@ export class ApprovalInbox {
                             <th>${__("Date")}</th>
                             <th>${__("Transaction")}</th>
                             <th>${__("#")}</th>
-                            <th>${__("Final State")}</th>
+                            <th>${__("State")}</th>
+                            <th>${__("Status")}</th>
+                            <th>${__("Actioned By")}</th>
                             <th>${__("Via Role")}</th>
                         </tr></thead>
                         <tbody>
-                        ${rows.map((r) => `
-                            <tr>
-                                <td>${esc(r.date)}</td>
-                                <td>${esc(r.doctype)}</td>
-                                <td><a href="${esc(r.doc_url)}" target="_blank">${esc(r.docname)}</a></td>
-                                <td><span class="ps-ai-state-badge">${esc(r.state)}</span></td>
-                                <td>${esc(r.role)}</td>
-                            </tr>
-                        `).join("")}
+                        ${rows.map((row) => {
+                            const status_cls = row.status === "Completed" ? "ps-ai-hist-done" : "ps-ai-hist-open";
+                            return `<tr>
+                                <td>${esc(row.date)}</td>
+                                <td>${esc(row.doctype)}</td>
+                                <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
+                                <td><span class="ps-ai-state-badge">${esc(row.state)}</span></td>
+                                <td><span class="ps-ai-hist-status ${status_cls}">${esc(__(row.status || "Open"))}</span></td>
+                                <td>${esc(row.completed_by || "—")}</td>
+                                <td>${esc(row.role || "—")}</td>
+                            </tr>`;
+                        }).join("")}
                         </tbody>
                     </table>
                     </div>
@@ -687,12 +692,11 @@ export class ApprovalInbox {
             method: "permission_manager.permission_manager.api.approvals.get_approval_analytics",
             callback: (r) => {
                 const d = r.message || {};
-                if (!d.summary) {
+                const { summary, volume_by_doctype = [], longest_pending = [], top_approvers = [] } = d;
+                if (!summary) {
                     $body.html(`<div class="ps-ai-empty"><h4>${__("No data yet.")}</h4></div>`);
                     return;
                 }
-
-                const { summary, volume_by_doctype, longest_pending, top_approvers } = d;
 
                 const summary_html = `
                     <div class="ps-ai-analytics-summary">
