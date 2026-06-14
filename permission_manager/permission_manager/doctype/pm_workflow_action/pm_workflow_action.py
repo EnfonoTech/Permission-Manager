@@ -129,19 +129,19 @@ def process_workflow_actions(doc, state):
 
     current_state = get_doc_workflow_state(doc)
 
-    # Close every open action that belongs to a PREVIOUS state — avoids stale inbox rows
-    # when the document cycles through states (e.g., Pending → Rejected → Pending again).
-    frappe.db.set_value(
-        "PM Workflow Action",
-        {
-            "reference_doctype": doc.get("doctype"),
-            "reference_name":    doc.get("name"),
-            "status":            "Open",
-            "workflow_state":    ("!=", current_state),
-        },
-        "status", "Completed",
-        update_modified=False,
-    )
+    # Close every open action from a PREVIOUS state and stamp who triggered the transition.
+    _WA = DocType("PM Workflow Action")
+    (
+        frappe.qb.update(_WA)
+        .set(_WA.status, "Completed")
+        .set(_WA.completed_by, frappe.session.user)
+        .where(
+            (_WA.reference_doctype == doc.get("doctype"))
+            & (_WA.reference_name == doc.get("name"))
+            & (_WA.status == "Open")
+            & (_WA.workflow_state != current_state)
+        )
+    ).run()
 
     if is_workflow_action_already_created(doc):
         return
