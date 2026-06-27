@@ -666,6 +666,14 @@ def get_pending_workflow_action(doctype: str, docname: str) -> dict | None:
     if action.assigned_to:
         action["assigned_to_name"] = frappe.db.get_value("User", action.assigned_to, "full_name")
 
+    # Always return the role(s) from permitted_roles so the form banner can show
+    # "Pending with: Stock Manager" even when no specific user is assigned.
+    action["pending_roles"] = frappe.get_all(
+        "PM Workflow Action Permitted Role",
+        filters={"parent": action.name, "approver_type": "Role"},
+        pluck="approver",
+    )
+
     return action
 
 

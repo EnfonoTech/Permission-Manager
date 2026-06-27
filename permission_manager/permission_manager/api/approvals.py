@@ -105,7 +105,13 @@ def get_my_pending_approvals() -> dict:
 
         if act.assigned_to == user:
             is_mine = True
-            role_id = "Direct"
+            # Prefer the role name over "Direct" for display — the action may have been
+            # pinned to this user via warehouse-permission resolution but still belongs to
+            # a named role (e.g. "Stock Manager").  Show that role so the inbox is useful.
+            role_id = next(
+                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                "Direct",
+            )
         else:
             for p in perms_map.get(act.name, []):
                 if p.approver_type == "Role" and p.approver in user_roles:
@@ -114,7 +120,10 @@ def get_my_pending_approvals() -> dict:
                     break
                 if p.approver_type == "User" and p.approver == user:
                     is_mine = True
-                    role_id = "Direct"
+                    role_id = next(
+                        (p2.approver for p2 in perms_map.get(act.name, []) if p2.approver_type == "Role"),
+                        "Direct",
+                    )
                     break
 
         if is_mine:

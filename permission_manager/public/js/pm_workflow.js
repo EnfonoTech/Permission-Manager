@@ -111,22 +111,25 @@ function _load_pending_approver_info(frm) {
 			const action = r.message;
 			if (!action) return;
 
-			const assigned_to = action.assigned_to;
-			const assigned_name = action.assigned_to_name || assigned_to;
+			const assigned_to   = action.assigned_to;
+			const assigned_name = action.assigned_to_name || (assigned_to || "").split("@")[0];
+			const pending_roles = action.pending_roles || [];
 
-			if (assigned_to) {
-				// Show "Pending approval from: Sarah" indicator below the title
+			// Prefer the resolved user name; fall back to the role name(s) for role-based routing.
+			const display_name = assigned_name || pending_roles.join(", ");
+
+			if (display_name) {
 				if (!frm.$wrapper.find(".pm-approver-info").length) {
 					const $info = $(`
 						<div class="pm-approver-info">
 							${frappe.utils.icon("users", "xs")}
 							<span>${__("Pending approval from:")}</span>
-							<strong class="pm-approver-name">${frappe.utils.escape_html(assigned_name)}</strong>
+							<strong class="pm-approver-name">${frappe.utils.escape_html(display_name)}</strong>
 						</div>
 					`);
 					frm.$wrapper.find(".page-head").after($info);
 				} else {
-					frm.$wrapper.find(".pm-approver-name").text(assigned_name);
+					frm.$wrapper.find(".pm-approver-name").text(display_name);
 				}
 			}
 

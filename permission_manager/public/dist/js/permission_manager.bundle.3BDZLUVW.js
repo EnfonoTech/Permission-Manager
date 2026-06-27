@@ -116,19 +116,21 @@
         if (!action)
           return;
         const assigned_to = action.assigned_to;
-        const assigned_name = action.assigned_to_name || assigned_to;
-        if (assigned_to) {
+        const assigned_name = action.assigned_to_name || (assigned_to || "").split("@")[0];
+        const pending_roles = action.pending_roles || [];
+        const display_name = assigned_name || pending_roles.join(", ");
+        if (display_name) {
           if (!frm.$wrapper.find(".pm-approver-info").length) {
             const $info = $(`
 						<div class="pm-approver-info">
 							${frappe.utils.icon("users", "xs")}
 							<span>${__("Pending approval from:")}</span>
-							<strong class="pm-approver-name">${frappe.utils.escape_html(assigned_name)}</strong>
+							<strong class="pm-approver-name">${frappe.utils.escape_html(display_name)}</strong>
 						</div>
 					`);
             frm.$wrapper.find(".page-head").after($info);
           } else {
-            frm.$wrapper.find(".pm-approver-name").text(assigned_name);
+            frm.$wrapper.find(".pm-approver-name").text(display_name);
           }
         }
         if (frappe.user.has_role(["System Manager", "HR Manager"])) {
@@ -5066,4 +5068,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.FR2TMV2N.js.map
+//# sourceMappingURL=permission_manager.bundle.3BDZLUVW.js.map
