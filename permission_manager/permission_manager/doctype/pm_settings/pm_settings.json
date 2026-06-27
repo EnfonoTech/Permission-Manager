@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "creation": "2026-06-27 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "ai_section",
+  "ai_provider",
+  "api_key",
+  "ai_model"
+ ],
+ "fields": [
+  {
+   "fieldname": "ai_section",
+   "fieldtype": "Section Break",
+   "label": "AI Workflow Generator"
+  },
+  {
+   "fieldname": "ai_provider",
+   "fieldtype": "Select",
+   "label": "AI Provider",
+   "options": "Claude (Anthropic)\nDeepClaude\nGroq",
+   "default": "Claude (Anthropic)"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "description": "API key for the selected provider."
+  },
+  {
+   "fieldname": "ai_model",
+   "fieldtype": "Data",
+   "label": "Model (optional)",
+   "description": "Leave blank to use the provider default. Examples — Claude: claude-sonnet-4-6, Groq: llama-3.3-70b-versatile"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

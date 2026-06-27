@@ -1,130 +1,139 @@
 """
 Permission Manager — AI Workflow Generator
-Calls the Claude API to convert a plain-English requirement into a structured
-PM Workflow configuration (states + transitions), then auto-creates any missing
-Workflow State and Workflow Action Master records before returning the config
-to the caller.
+Reads provider + API key from PM Settings (Single doctype), then calls the
+configured AI provider to convert a plain-English requirement into a structured
+PM Workflow configuration (states + transitions).
 """
 
 import json
 import frappe
 from frappe import _
 
+# ── Provider defaults ─────────────────────────────────────────────────────────
+
+_PROVIDER_DEFAULTS = {
+    "claude (anthropic)": {
+        "model": "claude-sonnet-4-6",
+    },
+    "deepclaude": {
+        "model": "claude-sonnet-4-6",
+    },
+    "groq": {
+        "model": "llama-3.3-70b-versatile",
+    },
+}
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """
-You are a Frappe / ERPNext workflow configuration expert for the Permission Manager app.
+You are a Frappe / ERPNext workflow configuration expert for the Permission Manager (PM) app.
 
-Given a plain-English business requirement, output a JSON object that describes a
-PM Workflow.  Follow these rules exactly:
+Given a plain-English requirement, output a JSON object describing a PM Workflow.
+Output ONLY valid JSON — no markdown fences, no explanation:
 
-STATES array — each item:
-  {
-    "state":               "<Workflow State name>",
-    "doc_status":          "0" | "1" | "2",   // 0=Draft, 1=Submitted, 2=Cancelled
-    "edit_permission_type": "Role" | "User",
-    "allow_edit":          "<role or user>",
-    "is_optional_state":   false,
-    "send_email":          true | false
-  }
-
-  Rules:
-  - First state is always doc_status "0" (draft).
-  - The final approved/accepted state is doc_status "1" (submitted) — it means the
-    document is physically submitted in Frappe, i.e. stock moves, journal entries post.
-  - Rejection/return states revert to doc_status "0".
-  - Never use doc_status "2" unless the requirement explicitly mentions cancellation.
-
-TRANSITIONS array — each item:
-  {
-    "state":                  "<from state>",
-    "action":                 "<Workflow Action Master name>",
-    "next_state":             "<to state>",
-    "approver_type":          "Role" | "User",
-    "allowed":                "<role or user name>",
-    "condition":              "<python expression or empty string>",
-    "is_return_for_correction": false | true,
-    "allow_self_approval":    true | false,
-    "require_comment":        false | true
-  }
-
-  Rules:
-  - Return/reject transitions must have is_return_for_correction: true and require_comment: true.
-  - Self-approval should be false for approval steps, true for initial submission steps.
-  - Conditions should use doc fields (e.g. doc.purpose == "Material Transfer") or
-    frappe.session.user comparisons.  Leave empty string when not needed.
-  - Common ERPNext roles: "Stock User", "Stock Manager", "Accounts User", "Accounts Manager",
-    "HR User", "HR Manager", "Purchase User", "Purchase Manager", "System Manager".
-
-SUGGESTED_WORKFLOW_NAME: a short, descriptive name string.
-DOCUMENT_TYPE: the Frappe DocType this workflow applies to (e.g. "Stock Entry",
-  "Purchase Order", "Leave Application", "Expense Claim", "Journal Entry").
-
-Output ONLY valid JSON in this exact shape — no markdown fences, no explanation:
 {
   "suggested_workflow_name": "...",
   "document_type": "...",
-  "states": [ ... ],
-  "transitions": [ ... ]
+  "states": [ <STATE>, ... ],
+  "transitions": [ <TRANSITION>, ... ]
 }
+
+━━━ STATE shape ━━━
+{
+  "state":                "<Workflow State name>",
+  "doc_status":           "0" | "1" | "2",
+  "edit_permission_type": "Role" | "User",
+  "allow_edit":           "<exact ERPNext role or email>",
+  "is_optional_state":    false | true,
+  "send_email":           false | true
+}
+
+doc_status rules:
+  "0" = Draft  (editable, not submitted)
+  "1" = Submitted  (final accepted state — ledger entries post, stock moves)
+  "2" = Cancelled  (only when requirement explicitly mentions cancellation)
+  • First state → "0".  Final approved/accepted state → "1".
+  • Rejected / returned states → "0" (document reverts to draft).
+  • NEVER use "Creator" as allow_edit — use the actual role (e.g. "Stock User").
+
+Common roles for allow_edit:
+  "Stock User", "Stock Manager", "Accounts User", "Accounts Manager",
+  "HR User", "HR Manager", "Purchase User", "Purchase Manager", "System Manager"
+
+━━━ TRANSITION shape ━━━
+{
+  "state":                    "<from state>",
+  "action":                   "<action label shown on button>",
+  "next_state":               "<to state>",
+
+  // ── Approver — choose ONE approach ──────────────────────────────────
+  // Option A: Role or specific User (most common)
+  "use_approver_matrix":      false,
+  "approver_type":            "Role" | "User",
+  "allowed":                  "<role or email>",
+  "matrix_level":             null,
+  "matrix_fallback_role":     "",
+
+  // Option B: Employee Approver Matrix (for HR/expense multi-level chains)
+  // Set use_approver_matrix=true; approver_type and allowed are ignored.
+  "use_approver_matrix":      true,
+  "matrix_level":             1,                  // 1 = direct manager, 2 = HOD, etc.
+  "matrix_fallback_role":     "<role>",           // used if no chain entry found
+  "approver_type":            "",
+  "allowed":                  "",
+  // ────────────────────────────────────────────────────────────────────
+
+  "allow_self_approval":      true | false,
+  "require_comment":          false | true,
+  "is_return_for_correction": false | true,
+  "condition":                "<python expression or empty string>"
+}
+
+Transition rules:
+  • Initial submit (creator sends for approval): allow_self_approval=true, use_approver_matrix=false.
+  • Approval steps: allow_self_approval=false.
+  • Reject/return: is_return_for_correction=true, require_comment=true, next_state reverts to draft state.
+  • Use use_approver_matrix=true ONLY when the requirement mentions "manager approval",
+    "multi-level", "HOD", "reporting manager", or similar hierarchy terms.
+  • Conditions: doc-level fields only, e.g. doc.purpose == "Material Transfer".
+    Leave "" when no condition is needed.
+  • NEVER use frappe.session.user inside conditions — that is evaluated at routing time separately.
 """
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def generate_workflow_from_requirement(
-    requirement: str,
-    provider: str = "claude",
-    api_key: str = None,
-) -> dict:
+def generate_workflow_from_requirement(requirement: str) -> dict:
     """
     Convert a plain-English requirement into a PM Workflow configuration.
-
-    provider: "claude"      — Anthropic direct API
-              "deepclaude"  — DeepClaude proxy (OpenAI-compatible)
-
-    Returns the parsed config dict.  Does NOT create any records yet —
-    call create_workflow_from_config to persist.
+    Provider and API key are read from PM Settings.
     """
     frappe.has_permission("PM Workflow", ptype="create", throw=True)
 
     if not requirement or not requirement.strip():
         frappe.throw(_("Please provide a workflow requirement."))
 
-    provider = (provider or "claude").lower().strip()
+    settings   = frappe.get_single("PM Settings")
+    provider   = (settings.ai_provider or "Claude (Anthropic)").strip().lower()
+    api_key    = settings.get_password("api_key") if settings.api_key else ""
+    model      = (settings.ai_model or "").strip() or _PROVIDER_DEFAULTS.get(provider, {}).get("model", "")
 
-    if provider == "deepclaude":
-        settings_key_field = "deepclaude_api_key"
-        key_label = "DeepClaude API Key"
-    else:
-        settings_key_field = "claude_api_key"
-        key_label = "Claude API Key"
+    if not api_key:
+        frappe.throw(_("API key not configured. Go to PM Settings and set the API Key."))
 
-    key = api_key or frappe.db.get_single_value("PM Settings", settings_key_field) or ""
-    if not key:
-        frappe.throw(
-            _("{0} not configured. Add it in PM Settings → {0} or pass it directly.").format(key_label)
-        )
-
-    if provider == "deepclaude":
-        raw = _call_deepclaude(key, requirement.strip())
-    else:
-        raw = _call_claude(key, requirement.strip())
-
-    config = _parse_config(raw)
-    return config
+    raw = _call_provider(provider, api_key, model, requirement.strip())
+    return _parse_config(raw)
 
 
 @frappe.whitelist()
 def create_workflow_from_config(config: str) -> dict:
     """
-    Given a config JSON string (as returned by generate_workflow_from_requirement),
-    create missing Workflow State and Workflow Action Master records, then return
-    the config ready for the PM Workflow form to pre-fill.
+    Given the config JSON returned by generate_workflow_from_requirement,
+    auto-create missing Workflow State and Workflow Action Master records.
     """
     frappe.has_permission("PM Workflow", ptype="create", throw=True)
 
-    config = frappe.parse_json(config)
+    config          = frappe.parse_json(config)
     created_states  = _ensure_workflow_states(config.get("states", []))
     created_actions = _ensure_workflow_actions(config.get("transitions", []))
 
@@ -135,10 +144,31 @@ def create_workflow_from_config(config: str) -> dict:
     }
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
+# ── Provider dispatch ─────────────────────────────────────────────────────────
 
-def _call_claude(api_key: str, requirement: str) -> str:
-    """Call the Anthropic API directly (native messages format)."""
+def _call_provider(provider: str, api_key: str, model: str, requirement: str) -> str:
+    if provider == "groq":
+        return _call_openai_compatible(
+            url="https://api.groq.com/openai/v1/chat/completions",
+            api_key=api_key,
+            model=model or "llama-3.3-70b-versatile",
+            requirement=requirement,
+            provider_label="Groq",
+        )
+    if provider == "deepclaude":
+        return _call_openai_compatible(
+            url="https://api.deepclaude.com/v1/chat/completions",
+            api_key=api_key,
+            model=model or "claude-sonnet-4-6",
+            requirement=requirement,
+            provider_label="DeepClaude",
+        )
+    # Default: Anthropic direct
+    return _call_claude(api_key, model or "claude-sonnet-4-6", requirement)
+
+
+def _call_claude(api_key: str, model: str, requirement: str) -> str:
+    """Anthropic native messages API."""
     import requests
 
     resp = requests.post(
@@ -149,35 +179,32 @@ def _call_claude(api_key: str, requirement: str) -> str:
             "content-type":      "application/json",
         },
         json={
-            "model":      "claude-sonnet-4-6",
+            "model":      model,
             "max_tokens": 2048,
             "system":     _SYSTEM_PROMPT,
             "messages":   [{"role": "user", "content": requirement}],
         },
         timeout=60,
     )
-
     if resp.status_code != 200:
-        frappe.throw(
-            _("Claude API error {0}: {1}").format(resp.status_code, resp.text[:300])
-        )
-
-    data = resp.json()
-    return data["content"][0]["text"]
+        frappe.throw(_("Claude API error {0}: {1}").format(resp.status_code, resp.text[:400]))
+    return resp.json()["content"][0]["text"]
 
 
-def _call_deepclaude(api_key: str, requirement: str) -> str:
-    """Call the DeepClaude proxy (OpenAI-compatible chat/completions format)."""
+def _call_openai_compatible(
+    url: str, api_key: str, model: str, requirement: str, provider_label: str
+) -> str:
+    """OpenAI-compatible chat/completions endpoint (Groq, DeepClaude, etc.)."""
     import requests
 
     resp = requests.post(
-        "https://api.deepclaude.com/v1/chat/completions",
+        url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "content-type":  "application/json",
         },
         json={
-            "model":      "claude-sonnet-4-6",
+            "model":      model,
             "max_tokens": 2048,
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -186,32 +213,26 @@ def _call_deepclaude(api_key: str, requirement: str) -> str:
         },
         timeout=60,
     )
-
     if resp.status_code != 200:
         frappe.throw(
-            _("DeepClaude API error {0}: {1}").format(resp.status_code, resp.text[:300])
+            _("{0} API error {1}: {2}").format(provider_label, resp.status_code, resp.text[:400])
         )
+    return resp.json()["choices"][0]["message"]["content"]
 
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
 
+# ── Config parsing & record creation ─────────────────────────────────────────
 
 def _parse_config(raw: str) -> dict:
     raw = raw.strip()
-    # Strip markdown code fences if the model wrapped the JSON
     if raw.startswith("```"):
-        lines = raw.splitlines()
-        raw = "\n".join(
-            l for l in lines if not l.startswith("```")
-        ).strip()
+        raw = "\n".join(l for l in raw.splitlines() if not l.startswith("```")).strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        frappe.throw(_("Could not parse Claude response as JSON: {0}").format(str(e)))
+        frappe.throw(_("Could not parse AI response as JSON: {0}").format(str(e)))
 
 
 def _ensure_workflow_states(states: list) -> list:
-    """Create Workflow State records that don't exist yet."""
     created = []
     for s in states:
         name = s.get("state")
@@ -228,7 +249,6 @@ def _ensure_workflow_states(states: list) -> list:
 
 
 def _ensure_workflow_actions(transitions: list) -> list:
-    """Create Workflow Action Master records that don't exist yet."""
     created = []
     seen = set()
     for t in transitions:
