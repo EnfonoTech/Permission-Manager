@@ -427,13 +427,45 @@ def _resolve_transition_assignments(transitions, doc, workflow_name):
                 else:
                     continue
         else:
-            key = (t.approver_type, t.allowed, None, None)
+            # For role-based transitions, try to pin the action to the specific
+            # user who holds that role AND has a User Permission for the document's
+            # target warehouse (to_warehouse).  This routes the inbox item directly
+            # to the right warehouse person without needing a session-user condition.
+            assigned_to = None
+            if t.approver_type == "Role" and doc.get("to_warehouse"):
+                assigned_to = _resolve_warehouse_approver(t.allowed, doc.get("to_warehouse"))
+            key = (t.approver_type, t.allowed, assigned_to, doc_owner if assigned_to else None)
 
         if key not in seen:
             seen.add(key)
             assignments.append(key)
 
     return assignments
+
+
+def _resolve_warehouse_approver(role: str, warehouse: str):
+    """
+    Return the user who has both the given role and a User Permission for the
+    warehouse, or None if no unique match is found.
+    """
+    if not warehouse:
+        return None
+    role_users = frappe.get_all(
+        "Has Role",
+        filters={"role": role, "parenttype": "User"},
+        pluck="parent",
+    )
+    if not role_users:
+        return None
+    return frappe.db.get_value(
+        "User Permission",
+        filters={
+            "user": ["in", role_users],
+            "allow": "Warehouse",
+            "for_value": warehouse,
+        },
+        fieldname="user",
+    )
 
 
 def get_users_next_action_data(transitions, doc):

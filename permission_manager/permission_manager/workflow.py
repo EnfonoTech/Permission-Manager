@@ -85,7 +85,12 @@ def get_closest_company_with_workflow(company: str, workflows: list[dict]) -> st
 
 @frappe.whitelist()
 def get_workflow_name(doctype: str, docname: str | int = None) -> str | None:
-    """Resolve the most specific active PM Workflow for a document."""
+    """Resolve the most specific active PM Workflow for a document.
+
+    Resolution order (most specific wins):
+      1. Company-specific workflows, ranked by dimension specificity
+      2. Global (no-company) workflows, ranked by dimension specificity
+    """
     if not frappe.db.table_exists("PM Workflow"):
         return None
 
@@ -95,36 +100,46 @@ def get_workflow_name(doctype: str, docname: str | int = None) -> str | None:
     cost_center = getattr(doc, "cost_center", None)
     user = getattr(doc, "owner", None) or frappe.session.user
 
-    if not company:
-        return None
-
     workflows = frappe.get_all(
         "PM Workflow",
         filters={"document_type": doctype, "is_active": 1},
         fields=["name", "company", "project", "cost_center", "allow_descendants", "user"],
     )
-
-    closest_company = get_closest_company_with_workflow(company, workflows)
-    if not closest_company:
+    if not workflows:
         return None
 
-    valid_workflows = [wf for wf in workflows if wf.company == closest_company]
     accounting_dimensions = frappe.get_all(
         "Accounting Dimension", filters={"disabled": 0}, pluck="fieldname"
     )
 
-    for check in [
-        lambda wf: wf.user and wf.user == user,
-        lambda wf: any(getattr(wf, d, None) and getattr(doc, d, None) == getattr(wf, d, None) for d in accounting_dimensions) if accounting_dimensions and doc else False,
-        lambda wf: wf.cost_center and wf.cost_center == cost_center,
-        lambda wf: wf.project and wf.project == project,
-        lambda wf: wf.company == closest_company,
-    ]:
-        for wf in valid_workflows:
-            if check(wf):
-                return wf.name
+    def _pick(candidates):
+        for check in [
+            lambda wf: wf.user and wf.user == user,
+            lambda wf: any(
+                getattr(wf, d, None) and getattr(doc, d, None) == getattr(wf, d, None)
+                for d in accounting_dimensions
+            ) if accounting_dimensions and doc else False,
+            lambda wf: wf.cost_center and wf.cost_center == cost_center,
+            lambda wf: wf.project and wf.project == project,
+            lambda wf: True,
+        ]:
+            for wf in candidates:
+                if check(wf):
+                    return wf.name
+        return None
 
-    return None
+    # 1. Company-specific match (respects parent-company inheritance)
+    if company:
+        closest_company = get_closest_company_with_workflow(company, workflows)
+        if closest_company:
+            company_workflows = [wf for wf in workflows if wf.company == closest_company]
+            result = _pick(company_workflows)
+            if result:
+                return result
+
+    # 2. Global fallback — workflows with no company set
+    global_workflows = [wf for wf in workflows if not wf.company]
+    return _pick(global_workflows)
 
 
 @frappe.whitelist()
@@ -395,7 +410,32 @@ def get_all_transitions_from_state(workflow_name: str, current_state: str, doc=N
         fields=["*"],
         order_by="idx asc",
     )
-    return [t for t in transitions if is_transition_condition_satisfied(t, doc)]
+    return [t for t in transitions if _is_condition_satisfied_for_routing(t, doc)]
+
+
+def _is_condition_satisfied_for_routing(transition, doc) -> bool:
+    """
+    Evaluate a transition condition for action-creation routing purposes.
+
+    Session-dependent conditions (those referencing frappe.session) are skipped
+    here — at action-creation time the session user is the submitter, not the
+    approver, so evaluating them would incorrectly drop valid transitions and
+    prevent actions from appearing in the approval inbox.
+
+    These conditions are still fully enforced at execution time via
+    get_transitions → is_transition_condition_satisfied, where session.user IS
+    the approver attempting the action.
+    """
+    if not transition.condition:
+        return True
+    if "frappe.session" in transition.condition:
+        return True
+    try:
+        return bool(frappe.safe_eval(
+            transition.condition, get_workflow_safe_globals(), dict(doc=doc.as_dict())
+        ))
+    except Exception:
+        return True
 
 
 def has_approval_access(user, doc, transition) -> bool:
