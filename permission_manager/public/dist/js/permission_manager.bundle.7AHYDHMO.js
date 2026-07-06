@@ -375,7 +375,6 @@
     try {
       var n = new Notification(title, {
         body,
-        icon: "/assets/permission_manager/images/pm_notification_icon.png",
         tag: "pm-approval",
         requireInteraction: false
       });
@@ -387,15 +386,23 @@
     } catch (_) {
     }
   }
-  function _request_notification_permission() {
+  var _pm_notif_requested = false;
+  function _request_notification_permission_on_gesture() {
     if (!("Notification" in window))
       return;
-    if (Notification.permission === "default") {
-      setTimeout(function() {
-        Notification.requestPermission();
-      }, 3e3);
+    if (Notification.permission !== "default")
+      return;
+    if (_pm_notif_requested)
+      return;
+    _pm_notif_requested = true;
+    try {
+      Notification.requestPermission();
+    } catch (_) {
     }
   }
+  document.addEventListener("click", function() {
+    _request_notification_permission_on_gesture();
+  }, { once: true });
   var _pm_bc = function() {
     try {
       return new BroadcastChannel("pm_approval_notifications");
@@ -432,7 +439,6 @@
   (function _setup_realtime(attempt) {
     try {
       if (frappe.realtime && frappe.realtime.socket) {
-        _request_notification_permission();
         frappe.realtime.on("pm_new_approval_action", function(data) {
           try {
             if (_pm_bc)
@@ -5217,4 +5223,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.XEMSMGYN.js.map
+//# sourceMappingURL=permission_manager.bundle.7AHYDHMO.js.map

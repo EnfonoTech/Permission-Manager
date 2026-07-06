@@ -194,6 +194,9 @@ function _render(page) {
     // Visualiser
     html += '<canvas id="ct-viz" width="580" height="56"></canvas>';
 
+    // Notification permission status
+    html += _notif_status_html();
+
     // Code output
     html += '<div class="ct-code-card">';
     html += '<div class="ct-code-hdr"><span class="ct-code-title">' + __("Generated Code — paste into pm_realtime.js") + "</span>";
@@ -206,6 +209,7 @@ function _render(page) {
 
     // Wire events
     _bindEvents(page);
+    _bind_notif_btn();
     _drawViz(false);
 }
 
@@ -367,6 +371,59 @@ function _bindEvents(page) {
     }
 }
 
+// ── Notification permission panel ─────────────────────────────────────────────
+
+function _notif_status_html() {
+    if (!("Notification" in window)) {
+        return '<div class="ct-notif-bar ct-notif-na">'
+            + '<span class="ct-notif-icon">🔕</span>'
+            + '<span>' + __("System notifications not supported in this browser.") + "</span>"
+            + "</div>";
+    }
+    var perm = Notification.permission;
+    if (perm === "granted") {
+        return '<div class="ct-notif-bar ct-notif-ok">'
+            + '<span class="ct-notif-icon">🔔</span>'
+            + '<strong>' + __("System notifications: ON") + "</strong>"
+            + '<span class="ct-notif-sub">' + __("OS alerts will appear when a new approval arrives.") + "</span>"
+            + "</div>";
+    }
+    if (perm === "denied") {
+        return '<div class="ct-notif-bar ct-notif-denied">'
+            + '<span class="ct-notif-icon">🚫</span>'
+            + '<strong>' + __("System notifications: BLOCKED") + "</strong>"
+            + '<span class="ct-notif-sub">'
+            + __("Unblock in browser settings: click the 🔒 lock icon in the address bar → Notifications → Allow.")
+            + "</span>"
+            + "</div>";
+    }
+    // "default" — not yet asked
+    return '<div class="ct-notif-bar ct-notif-ask">'
+        + '<span class="ct-notif-icon">🔔</span>'
+        + '<strong>' + __("System notifications: not enabled") + "</strong>"
+        + '<span class="ct-notif-sub">' + __("Click the button to allow OS alerts alongside the chime.") + "</span>"
+        + '<button class="ct-notif-btn" id="ct-grant-notif">' + __("Enable Notifications") + "</button>"
+        + "</div>";
+}
+
+function _bind_notif_btn() {
+    var btn = document.getElementById("ct-grant-notif");
+    if (!btn) return;
+    btn.addEventListener("click", function () {
+        Notification.requestPermission().then(function (result) {
+            // Re-render just the status bar to reflect the new state
+            var bar = document.querySelector(".ct-notif-bar");
+            if (bar) bar.outerHTML = _notif_status_html();
+            _bind_notif_btn();
+            if (result === "granted") {
+                frappe.show_alert({ message: __("Notifications enabled!"), indicator: "green" }, 4);
+            } else {
+                frappe.show_alert({ message: __("Notifications blocked. Check browser settings."), indicator: "orange" }, 6);
+            }
+        });
+    });
+}
+
 // ── Fire test notification (server-side realtime event) ────────────────────────
 
 function _fire_test_notification(page) {
@@ -494,6 +551,23 @@ function _inject_css() {
 #ct-code-out { margin: 0; padding: 14px; background: #18161a; color: #e8e4f0;
     font-family: 'SF Mono','Fira Code',Consolas,monospace; font-size: 12px;
     line-height: 1.65; overflow-x: auto; white-space: pre; tab-size: 4; }
+
+/* notification status bar */
+.ct-notif-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    padding: 10px 14px; border-radius: 8px; margin-bottom: 16px;
+    border: 1px solid var(--border-color); font-size: 12px; }
+.ct-notif-icon { font-size: 16px; flex-shrink: 0; }
+.ct-notif-ok     { background: #ecfdf5; border-color: #6ee7b7; color: #065f46; }
+.ct-notif-denied { background: #fef2f2; border-color: #fca5a5; color: #991b1b; }
+.ct-notif-ask    { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
+.ct-notif-na     { background: var(--control-bg); color: var(--text-muted); }
+.ct-notif-sub    { color: inherit; opacity: .75; font-size: 11px; flex: 1 1 100%; margin-top: 1px; }
+.ct-notif-btn { margin-left: auto; padding: 5px 14px; border-radius: 6px;
+    border: 1px solid currentColor; background: transparent; color: inherit;
+    font-size: 12px; font-weight: 700; font-family: inherit; cursor: pointer;
+    transition: background .12s, color .12s; }
+.ct-notif-btn:hover { background: currentColor; }
+.ct-notif-btn:hover { color: #fff; }
     `;
     document.head.appendChild(s);
 }

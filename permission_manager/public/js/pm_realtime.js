@@ -71,9 +71,9 @@ function _show_system_notification(title, body) {
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     try {
+        // No custom icon — avoids silent failure when the image file is absent
         var n = new Notification(title, {
             body: body,
-            icon: "/assets/permission_manager/images/pm_notification_icon.png",
             tag: "pm-approval",
             requireInteraction: false,
         });
@@ -85,12 +85,22 @@ function _show_system_notification(title, body) {
     } catch (_) {}
 }
 
-function _request_notification_permission() {
+// Chrome 84+ requires a user gesture to call requestPermission().
+// We hook into the first click on the page rather than using a bare setTimeout.
+var _pm_notif_requested = false;
+function _request_notification_permission_on_gesture() {
     if (!("Notification" in window)) return;
-    if (Notification.permission === "default") {
-        setTimeout(function () { Notification.requestPermission(); }, 3000);
-    }
+    if (Notification.permission !== "default") return;
+    if (_pm_notif_requested) return;
+    _pm_notif_requested = true;
+    try {
+        Notification.requestPermission();
+    } catch (_) {}
 }
+
+document.addEventListener("click", function () {
+    _request_notification_permission_on_gesture();
+}, { once: true });
 
 // ── BroadcastChannel — cross-tab chime ────────────────────────────────────────
 
@@ -136,7 +146,6 @@ if (_pm_bc) {
 (function _setup_realtime(attempt) {
     try {
         if (frappe.realtime && frappe.realtime.socket) {
-            _request_notification_permission();
             frappe.realtime.on("pm_new_approval_action", function (data) {
                 try {
                     if (_pm_bc) _pm_bc.postMessage(data);
