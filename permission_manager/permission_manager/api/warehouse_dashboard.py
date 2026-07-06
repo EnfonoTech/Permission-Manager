@@ -73,10 +73,10 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
         },
         fields=[
             "name", "transaction_date", "status",
-            "set_from_warehouse", "set_warehouse", "owner",
+            "set_from_warehouse", "set_warehouse", "owner", "custom_priority",
         ],
         order_by="transaction_date desc",
-        limit=50,
+        limit=100,
     )
     return _enrich_mrs(mrs)
 
