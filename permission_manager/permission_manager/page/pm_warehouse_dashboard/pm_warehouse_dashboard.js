@@ -70,8 +70,9 @@ function _setup_events(page) {
         _draw(page);
     });
 
-    // Open document on row click
-    page.main.on("click", ".wh-item[data-doctype][data-name]", function () {
+    // Open document — whole-row click (fires when user clicks anywhere except the <a> link itself)
+    page.main.on("click", ".wh-row[data-doctype][data-name]", function (e) {
+        if ($(e.target).closest("a.wh-doc-link").length) return; // let the link handle it
         frappe.set_route("Form", $(this).data("doctype"), $(this).data("name"));
     });
 }
@@ -249,6 +250,10 @@ function _draw(page) {
 
 // ── Row builders ───────────────────────────────────────────────────────────────
 
+function _doc_link(doctype, name) {
+    return "/app/" + doctype.toLowerCase().replace(/ /g, "-") + "/" + encodeURIComponent(name);
+}
+
 var _PRI_CLS = {
     Critical: "wh-pri-critical",
     Urgent:   "wh-pri-urgent",
@@ -280,7 +285,9 @@ function _mr_row(mr) {
         : "";
 
     return '<div class="wh-row" data-doctype="Material Request" data-name="' + e(mr.name) + '">'
-        + '<div class="wh-row-name">' + e(mr.name) + pri_html + "</div>"
+        + '<div class="wh-row-name">'
+        + '<a class="wh-doc-link" href="' + _doc_link("Material Request", mr.name) + '">' + e(mr.name) + "</a>"
+        + pri_html + "</div>"
         + '<div class="wh-row-route">'
         + '<span class="wh-wh">' + e(mr.set_from_warehouse || "—") + "</span>"
         + '<span class="wh-arr">→</span>'
@@ -308,7 +315,8 @@ function _approval_row(ap) {
         : "";
 
     return '<div class="wh-row" data-doctype="' + e(ap.reference_doctype) + '" data-name="' + e(ap.reference_name) + '">'
-        + '<div class="wh-row-name">' + e(ap.reference_name)
+        + '<div class="wh-row-name">'
+        + '<a class="wh-doc-link" href="' + _doc_link(ap.reference_doctype, ap.reference_name) + '">' + e(ap.reference_name) + "</a>"
         + '<span class="wh-state-pill">' + e(ap.workflow_state || "") + "</span>"
         + "</div>"
         + wh_html
@@ -475,9 +483,23 @@ function _inject_css() {
     border: 1px solid var(--border-color);
     border-top: none;
     border-radius: 0 0 8px 8px;
-    overflow: hidden;
+    overflow-y: auto;
+    max-height: 420px;
 }
-.wh-list-full { border-radius: 0 0 8px 8px; }
+.wh-list-full {
+    border-radius: 0 0 8px 8px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+/* thin scrollbar */
+.wh-list::-webkit-scrollbar,
+.wh-list-full::-webkit-scrollbar { width: 5px; }
+.wh-list::-webkit-scrollbar-track,
+.wh-list-full::-webkit-scrollbar-track { background: transparent; }
+.wh-list::-webkit-scrollbar-thumb,
+.wh-list-full::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+.wh-list::-webkit-scrollbar-thumb:hover,
+.wh-list-full::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ── Row ──────────────────────────────── */
 .wh-row {
@@ -498,8 +520,9 @@ function _inject_css() {
 
 /* row grid areas */
 .wh-row-name  { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: 6px;
-    font-size: 12px; font-weight: 700; color: var(--primary); }
-.wh-row:hover .wh-row-name { text-decoration: underline; }
+    font-size: 12px; font-weight: 700; }
+.wh-doc-link { color: var(--primary); text-decoration: none; font-weight: 700; }
+.wh-doc-link:hover { text-decoration: underline; color: var(--primary-dark, var(--primary)); }
 .wh-row-route { grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 4px;
     margin-top: 2px; flex-wrap: wrap; }
 .wh-row-meta  { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column;
