@@ -341,8 +341,8 @@ def _apply_add_override(user_doc, safe: str, items: list) -> tuple:
 def _apply_restrict_override(user_doc, safe: str, items: list) -> tuple:
     """
     RESTRICT mode: snapshot the user's full effective permissions,
-    apply restrictions on top, write everything into PM_Base_{user}.
-    Profile = [PM_Base_{user}] only.
+    apply the editor items on top, write everything into PM_Base_{user}.
+    Profile = original roles + PM_Base_{user} so existing access is preserved.
     """
     base_r = f"{_PM_BASE_PREFIX}{safe}"
     base_roles = {"All", "Guest"}
@@ -456,7 +456,34 @@ def _apply_restrict_override(user_doc, safe: str, items: list) -> tuple:
     for dt in effective.keys():
         frappe.clear_cache(doctype=dt)
 
-    return base_r, [base_r]
+    # Include the user's original roles alongside PM_Base so existing permissions
+    # are preserved (Frappe permissions are additive — this does NOT block PM_Base
+    # from granting extra access configured in the editor).
+    import json as _json
+    pm_orig_key = f"pm_original_{safe}"
+    orig_json = frappe.db.get_default(pm_orig_key)
+    orig_roles: list[str] = []
+    if orig_json:
+        try:
+            orig_data = _json.loads(orig_json)
+            orig_roles = [
+                r for r in orig_data.get("roles", [])
+                if r not in base_set and frappe.db.exists("Role", r)
+            ]
+        except Exception:
+            pass
+    else:
+        # Snapshot not yet recorded — fall back to current roles excluding PM_* roles
+        orig_roles = [
+            r for r in all_current_roles
+            if r not in base_set and not r.startswith(("PM_Base_", "PM_Extra_", "PM_Profile_"))
+        ]
+
+    profile_roles = sorted(set(orig_roles) - base_set)
+    if base_r not in profile_roles:
+        profile_roles.append(base_r)
+
+    return base_r, profile_roles
 
 
 def _cleanup_role(role_name: str):
