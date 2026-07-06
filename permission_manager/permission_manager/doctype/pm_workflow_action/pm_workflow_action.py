@@ -596,6 +596,20 @@ def _push_inbox_notifications(assignments, doc):
         except Exception:
             pass
 
+        try:
+            frappe.publish_realtime(
+                event="pm_new_approval_action",
+                message={
+                    "doctype": doctype,
+                    "docname": docname,
+                    "subject": subject,
+                },
+                user=user,
+                after_commit=True,
+            )
+        except Exception:
+            pass
+
 
 def send_workflow_action_email(doc, transitions):
     users_data = get_users_next_action_data(transitions, doc)

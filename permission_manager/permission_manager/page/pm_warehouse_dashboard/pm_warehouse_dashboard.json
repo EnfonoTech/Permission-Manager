@@ -1,0 +1,16 @@
+{
+ "creation": "2026-07-06 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "fa fa-th-large",
+ "idx": 0,
+ "modified": "2026-07-06 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "pm-warehouse-dashboard",
+ "owner": "Administrator",
+ "page_name": "pm-warehouse-dashboard",
+ "roles": [],
+ "standard": "Yes",
+ "title": "Warehouse Dashboard"
+}

@@ -311,6 +311,111 @@
     }).finally(() => frappe.dom.unfreeze());
   }
 
+  // ../permission_manager/permission_manager/public/js/pm_realtime.js
+  function _play_approval_chime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx)
+        return;
+      const ctx = new AudioCtx();
+      [[587.33, 0], [739.99, 0.22]].forEach(([freq, delay]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t = ctx.currentTime + delay;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.22, t + 0.015);
+        gain.gain.exponentialRampToValueAtTime(1e-3, t + 0.55);
+        osc.start(t);
+        osc.stop(t + 0.6);
+      });
+    } catch (_) {
+    }
+  }
+  function _show_system_notification(title, body) {
+    if (!("Notification" in window))
+      return;
+    if (Notification.permission !== "granted")
+      return;
+    try {
+      const n = new Notification(title, {
+        body,
+        icon: "/assets/permission_manager/images/pm_notification_icon.png",
+        tag: "pm-approval",
+        requireInteraction: false
+      });
+      n.onclick = () => {
+        window.focus();
+        frappe.set_route("pm-approval-inbox");
+        n.close();
+      };
+    } catch (_) {
+    }
+  }
+  function _request_notification_permission() {
+    if (!("Notification" in window))
+      return;
+    if (Notification.permission === "default") {
+      setTimeout(() => {
+        Notification.requestPermission();
+      }, 3e3);
+    }
+  }
+  var _pm_bc = function() {
+    try {
+      return new BroadcastChannel("pm_approval_notifications");
+    } catch (_) {
+      return null;
+    }
+  }();
+  function _handle_approval_event(data, { alert = true } = {}) {
+    _play_approval_chime();
+    if (alert) {
+      frappe.show_alert(
+        {
+          message: __("New approval: {0} {1}", [data.doctype, data.docname]),
+          indicator: "orange"
+        },
+        8
+      );
+    }
+    _show_system_notification(
+      __("Approval Required"),
+      data.subject || __("{0} {1} is waiting for your approval.", [data.doctype, data.docname])
+    );
+    const inbox_page = frappe.pages && frappe.pages["pm-approval-inbox"];
+    if (inbox_page && inbox_page.approval_inbox) {
+      inbox_page.approval_inbox.load();
+    }
+  }
+  if (_pm_bc) {
+    _pm_bc.onmessage = (evt) => {
+      try {
+        _handle_approval_event(evt.data, { alert: false });
+      } catch (_) {
+      }
+    };
+  }
+  setTimeout(() => {
+    try {
+      _request_notification_permission();
+      if (frappe.realtime && typeof frappe.realtime.on === "function") {
+        frappe.realtime.on("pm_new_approval_action", (data) => {
+          try {
+            if (_pm_bc)
+              _pm_bc.postMessage(data);
+            _handle_approval_event(data);
+          } catch (_) {
+          }
+        });
+      }
+    } catch (_) {
+    }
+  }, 0);
+
   // ../permission_manager/permission_manager/public/js/utils/helpers.js
   var MATRIX_RIGHTS = [
     "select",
@@ -2182,6 +2287,14 @@
     "Decision Pending": { color: "ps-ai-grp-decision", icon: "branch" },
     "Acknowledgement Pending": { color: "ps-ai-grp-ack", icon: "tick" }
   };
+  function _action_btn_class(action_name) {
+    const n = (action_name || "").toLowerCase();
+    if (/\b(accept|approve|submit|confirm|complete|done|pass)\b/.test(n))
+      return "btn-success";
+    if (/\b(reject|decline|cancel|return|refuse|deny|refuse)\b/.test(n))
+      return "btn-danger";
+    return "btn-default";
+  }
   var PRIORITY_CLASS = {
     Critical: "ps-ai-pri-critical",
     Urgent: "ps-ai-pri-urgent",
@@ -2446,8 +2559,8 @@
       const row_class = item.days > 30 ? "ps-ai-row ps-ai-row-overdue" : "ps-ai-row";
       const search_val = [item.doctype, item.docname, item.creator, item.role_id, item.state].join(" ").toLowerCase();
       let act_html = "";
-      (item.available_actions || []).forEach((act_name, idx) => {
-        const cls = idx === 0 ? "btn-success" : idx === 1 ? "btn-danger" : "btn-default";
+      (item.available_actions || []).forEach((act_name) => {
+        const cls = _action_btn_class(act_name);
         act_html += `<button class="btn btn-xs ${cls} ps-ai-act-btn"
                 data-action="${esc(act_name)}"
                 data-doctype="${esc(item.doctype)}"
@@ -2492,7 +2605,7 @@
                 </td>
                 <td class="ps-ai-col-role">${esc(item.role_id)}</td>
                 <td class="ps-ai-col-holder">
-                    ${item.holder ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>` : `<span class="text-muted ps-ai-holder-role">${esc(item.role_id || "\u2014")}</span>`}
+                    ${item.role_id && item.role_id !== "Direct" ? `<span class="text-muted ps-ai-holder-role">${esc(item.role_id)}</span>` : item.holder ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>` : `<span class="text-muted">\u2014</span>`}
                 </td>
                 <td class="ps-ai-col-state">
                     <span class="ps-ai-state-badge">${esc(item.state)}</span>
@@ -5068,4 +5181,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.3BDZLUVW.js.map
+//# sourceMappingURL=permission_manager.bundle.IGFB7SPW.js.map

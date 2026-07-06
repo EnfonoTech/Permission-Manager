@@ -9,6 +9,14 @@ const CATEGORY_META = {
     "Acknowledgement Pending": { color: "ps-ai-grp-ack",      icon: "tick"    },
 };
 
+// Color action buttons by semantics, not list position
+function _action_btn_class(action_name) {
+    const n = (action_name || "").toLowerCase();
+    if (/\b(accept|approve|submit|confirm|complete|done|pass)\b/.test(n)) return "btn-success";
+    if (/\b(reject|decline|cancel|return|refuse|deny|refuse)\b/.test(n)) return "btn-danger";
+    return "btn-default";
+}
+
 const PRIORITY_CLASS = {
     Critical: "ps-ai-pri-critical",
     Urgent:   "ps-ai-pri-urgent",
@@ -323,8 +331,8 @@ export class ApprovalInbox {
             .join(" ").toLowerCase();
 
         let act_html = "";
-        (item.available_actions || []).forEach((act_name, idx) => {
-            const cls = idx === 0 ? "btn-success" : idx === 1 ? "btn-danger" : "btn-default";
+        (item.available_actions || []).forEach((act_name) => {
+            const cls = _action_btn_class(act_name);
             act_html += `<button class="btn btn-xs ${cls} ps-ai-act-btn"
                 data-action="${esc(act_name)}"
                 data-doctype="${esc(item.doctype)}"
@@ -371,9 +379,11 @@ export class ApprovalInbox {
                 </td>
                 <td class="ps-ai-col-role">${esc(item.role_id)}</td>
                 <td class="ps-ai-col-holder">
-                    ${item.holder
-                        ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>`
-                        : `<span class="text-muted ps-ai-holder-role">${esc(item.role_id || "—")}</span>`}
+                    ${item.role_id && item.role_id !== "Direct"
+                        ? `<span class="text-muted ps-ai-holder-role">${esc(item.role_id)}</span>`
+                        : item.holder
+                            ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>`
+                            : `<span class="text-muted">—</span>`}
                 </td>
                 <td class="ps-ai-col-state">
                     <span class="ps-ai-state-badge">${esc(item.state)}</span>
