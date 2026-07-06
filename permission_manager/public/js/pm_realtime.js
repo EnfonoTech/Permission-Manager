@@ -1,42 +1,83 @@
 // Permission Manager — real-time approval inbox notifications
-// Listens for pm_new_approval_action events pushed via frappe.publish_realtime
-// and plays a two-tone chime, shows a toast, fires a system notification,
-// and refreshes the inbox if open.
+
+// ── Shared AudioContext ────────────────────────────────────────────────────────
+// Browsers block `new AudioContext()` in async/realtime callbacks (autoplay policy).
+// Solution: create the context once on the first user click and keep it alive.
+// Every subsequent chime — including those triggered by Socket.io events —
+// uses this already-running context.
+
+var _pm_audio_ctx = null;
+
+function _get_pm_audio_ctx() {
+    try {
+        var A = window.AudioContext || window.webkitAudioContext;
+        if (!A) return null;
+        if (!_pm_audio_ctx) {
+            _pm_audio_ctx = new A();
+        }
+        return _pm_audio_ctx;
+    } catch (_) {
+        return null;
+    }
+}
+
+// Resume the context on every click so it never stays suspended after the
+// browser auto-suspends it (happens after ~30 s of silence on some browsers).
+document.addEventListener("click", function () {
+    try {
+        var ctx = _get_pm_audio_ctx();
+        if (ctx && ctx.state === "suspended") ctx.resume();
+    } catch (_) {}
+});
+
+function _do_play_chime(ctx) {
+    // Two-tone ascending chime: D5 (587 Hz) → F#5 (740 Hz)
+    [[587.33, 0], [739.99, 0.22]].forEach(function (tone) {
+        var freq  = tone[0], delay = tone[1];
+        var osc   = ctx.createOscillator();
+        var gain  = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        var t = ctx.currentTime + delay;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.22, t + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+        osc.start(t);
+        osc.stop(t + 0.6);
+    });
+}
 
 function _play_approval_chime() {
     try {
-        const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
-        // Two-tone ascending chime: D5 (587 Hz) then F#5 (740 Hz)
-        [[587.33, 0], [739.99, 0.22]].forEach(([freq, delay]) => {
-            const osc  = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.type = "sine";
-            osc.frequency.value = freq;
-            const t = ctx.currentTime + delay;
-            gain.gain.setValueAtTime(0, t);
-            gain.gain.linearRampToValueAtTime(0.22, t + 0.015);
-            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
-            osc.start(t);
-            osc.stop(t + 0.6);
-        });
+        var ctx = _get_pm_audio_ctx();
+        if (!ctx) return;
+
+        if (ctx.state === "running") {
+            _do_play_chime(ctx);
+        } else if (ctx.state === "suspended") {
+            // Attempt resume — resolves async but usually fast enough
+            ctx.resume().then(function () {
+                _do_play_chime(ctx);
+            }).catch(function () {});
+        }
     } catch (_) {}
 }
+
+// ── System notification ────────────────────────────────────────────────────────
 
 function _show_system_notification(title, body) {
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     try {
-        const n = new Notification(title, {
-            body,
+        var n = new Notification(title, {
+            body: body,
             icon: "/assets/permission_manager/images/pm_notification_icon.png",
-            tag: "pm-approval",          // replaces previous unread one instead of stacking
+            tag: "pm-approval",
             requireInteraction: false,
         });
-        n.onclick = () => {
+        n.onclick = function () {
             window.focus();
             frappe.set_route("pm-approval-inbox");
             n.close();
@@ -47,29 +88,24 @@ function _show_system_notification(title, body) {
 function _request_notification_permission() {
     if (!("Notification" in window)) return;
     if (Notification.permission === "default") {
-        // Delay slightly so it doesn't fire on every page load before user interaction
-        setTimeout(() => {
-            Notification.requestPermission();
-        }, 3000);
+        setTimeout(function () { Notification.requestPermission(); }, 3000);
     }
 }
 
-// BroadcastChannel lets background tabs hear the chime when the active tab
-// receives the realtime event from the server. Falls back silently if unsupported.
-const _pm_bc = (function () {
+// ── BroadcastChannel — cross-tab chime ────────────────────────────────────────
+
+var _pm_bc = (function () {
     try { return new BroadcastChannel("pm_approval_notifications"); }
     catch (_) { return null; }
 })();
 
-function _handle_approval_event(data, { alert = true } = {}) {
+function _handle_approval_event(data, opts) {
+    var alert = !opts || opts.alert !== false;
     _play_approval_chime();
 
     if (alert) {
         frappe.show_alert(
-            {
-                message: __("New approval: {0} {1}", [data.doctype, data.docname]),
-                indicator: "orange",
-            },
+            { message: __("New approval: {0} {1}", [data.doctype, data.docname]), indicator: "orange" },
             8
         );
     }
@@ -79,37 +115,39 @@ function _handle_approval_event(data, { alert = true } = {}) {
         data.subject || __("{0} {1} is waiting for your approval.", [data.doctype, data.docname])
     );
 
-    // Auto-refresh inbox if open in this tab
-    const inbox_page = frappe.pages && frappe.pages["pm-approval-inbox"];
+    var inbox_page = frappe.pages && frappe.pages["pm-approval-inbox"];
     if (inbox_page && inbox_page.approval_inbox) {
         inbox_page.approval_inbox.load();
     }
 }
 
-// Listen for events broadcast from the tab that received the server push
 if (_pm_bc) {
-    _pm_bc.onmessage = (evt) => {
+    _pm_bc.onmessage = function (evt) {
         try { _handle_approval_event(evt.data, { alert: false }); } catch (_) {}
     };
 }
 
-// Retry until frappe.realtime.on is available (socket is initialized asynchronously
-// during Frappe boot; setTimeout(0) is too early on slow connections).
+// ── Socket.io listener — with retry ───────────────────────────────────────────
+// frappe.realtime = new RealTimeClient() runs at bundle-load time, but
+// frappe.realtime.init() (which sets this.socket) runs later in desk.js
+// inside $(document).ready.  frappe.realtime.on() silently does nothing when
+// this.socket is null, so we must wait until the socket object exists.
+
 (function _setup_realtime(attempt) {
     try {
-        if (frappe.realtime && typeof frappe.realtime.on === "function") {
+        if (frappe.realtime && frappe.realtime.socket) {
             _request_notification_permission();
-            frappe.realtime.on("pm_new_approval_action", (data) => {
+            frappe.realtime.on("pm_new_approval_action", function (data) {
                 try {
                     if (_pm_bc) _pm_bc.postMessage(data);
                     _handle_approval_event(data);
                 } catch (_) {}
             });
-            return; // registered successfully
+            return; // listener registered — stop retrying
         }
     } catch (_) {}
-    // Not ready yet — retry every 500 ms for up to 30 seconds
-    if (attempt < 60) {
-        setTimeout(() => _setup_realtime(attempt + 1), 500);
+    // Socket not ready yet — retry every 300 ms for up to 30 s
+    if (attempt < 100) {
+        setTimeout(function () { _setup_realtime(attempt + 1); }, 300);
     }
 })(0);

@@ -312,26 +312,58 @@
   }
 
   // ../permission_manager/permission_manager/public/js/pm_realtime.js
+  var _pm_audio_ctx = null;
+  function _get_pm_audio_ctx() {
+    try {
+      var A = window.AudioContext || window.webkitAudioContext;
+      if (!A)
+        return null;
+      if (!_pm_audio_ctx) {
+        _pm_audio_ctx = new A();
+      }
+      return _pm_audio_ctx;
+    } catch (_) {
+      return null;
+    }
+  }
+  document.addEventListener("click", function() {
+    try {
+      var ctx = _get_pm_audio_ctx();
+      if (ctx && ctx.state === "suspended")
+        ctx.resume();
+    } catch (_) {
+    }
+  });
+  function _do_play_chime(ctx) {
+    [[587.33, 0], [739.99, 0.22]].forEach(function(tone) {
+      var freq = tone[0], delay = tone[1];
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      var t = ctx.currentTime + delay;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.22, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(1e-3, t + 0.55);
+      osc.start(t);
+      osc.stop(t + 0.6);
+    });
+  }
   function _play_approval_chime() {
     try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx)
+      var ctx = _get_pm_audio_ctx();
+      if (!ctx)
         return;
-      const ctx = new AudioCtx();
-      [[587.33, 0], [739.99, 0.22]].forEach(([freq, delay]) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        const t = ctx.currentTime + delay;
-        gain.gain.setValueAtTime(0, t);
-        gain.gain.linearRampToValueAtTime(0.22, t + 0.015);
-        gain.gain.exponentialRampToValueAtTime(1e-3, t + 0.55);
-        osc.start(t);
-        osc.stop(t + 0.6);
-      });
+      if (ctx.state === "running") {
+        _do_play_chime(ctx);
+      } else if (ctx.state === "suspended") {
+        ctx.resume().then(function() {
+          _do_play_chime(ctx);
+        }).catch(function() {
+        });
+      }
     } catch (_) {
     }
   }
@@ -341,13 +373,13 @@
     if (Notification.permission !== "granted")
       return;
     try {
-      const n = new Notification(title, {
+      var n = new Notification(title, {
         body,
         icon: "/assets/permission_manager/images/pm_notification_icon.png",
         tag: "pm-approval",
         requireInteraction: false
       });
-      n.onclick = () => {
+      n.onclick = function() {
         window.focus();
         frappe.set_route("pm-approval-inbox");
         n.close();
@@ -359,7 +391,7 @@
     if (!("Notification" in window))
       return;
     if (Notification.permission === "default") {
-      setTimeout(() => {
+      setTimeout(function() {
         Notification.requestPermission();
       }, 3e3);
     }
@@ -371,14 +403,12 @@
       return null;
     }
   }();
-  function _handle_approval_event(data, { alert = true } = {}) {
+  function _handle_approval_event(data, opts) {
+    var alert = !opts || opts.alert !== false;
     _play_approval_chime();
     if (alert) {
       frappe.show_alert(
-        {
-          message: __("New approval: {0} {1}", [data.doctype, data.docname]),
-          indicator: "orange"
-        },
+        { message: __("New approval: {0} {1}", [data.doctype, data.docname]), indicator: "orange" },
         8
       );
     }
@@ -386,13 +416,13 @@
       __("Approval Required"),
       data.subject || __("{0} {1} is waiting for your approval.", [data.doctype, data.docname])
     );
-    const inbox_page = frappe.pages && frappe.pages["pm-approval-inbox"];
+    var inbox_page = frappe.pages && frappe.pages["pm-approval-inbox"];
     if (inbox_page && inbox_page.approval_inbox) {
       inbox_page.approval_inbox.load();
     }
   }
   if (_pm_bc) {
-    _pm_bc.onmessage = (evt) => {
+    _pm_bc.onmessage = function(evt) {
       try {
         _handle_approval_event(evt.data, { alert: false });
       } catch (_) {
@@ -401,9 +431,9 @@
   }
   (function _setup_realtime(attempt) {
     try {
-      if (frappe.realtime && typeof frappe.realtime.on === "function") {
+      if (frappe.realtime && frappe.realtime.socket) {
         _request_notification_permission();
-        frappe.realtime.on("pm_new_approval_action", (data) => {
+        frappe.realtime.on("pm_new_approval_action", function(data) {
           try {
             if (_pm_bc)
               _pm_bc.postMessage(data);
@@ -415,8 +445,10 @@
       }
     } catch (_) {
     }
-    if (attempt < 60) {
-      setTimeout(() => _setup_realtime(attempt + 1), 500);
+    if (attempt < 100) {
+      setTimeout(function() {
+        _setup_realtime(attempt + 1);
+      }, 300);
     }
   })(0);
 
@@ -5185,4 +5217,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.SRVE7XZK.js.map
+//# sourceMappingURL=permission_manager.bundle.XEMSMGYN.js.map

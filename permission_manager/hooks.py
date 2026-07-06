@@ -84,6 +84,13 @@ has_permission = {
 
 # ─── Document event hooks ─────────────────────────────────────────────────────
 doc_events = {
+    # ── Warehouse dashboard real-time notifications ────────────────────────────
+    "Material Request": {
+        "on_submit": "permission_manager.permission_manager.api.warehouse_notifications.on_material_request_submit",
+    },
+    "PM Workflow Action": {
+        "after_insert": "permission_manager.permission_manager.api.warehouse_notifications.on_pm_workflow_action_insert",
+    },
     # Multi-level Leave Approval
     "Leave Application": {
         "before_save":   "permission_manager.permission_manager.ladder_approve.leave_application.api.before_save",

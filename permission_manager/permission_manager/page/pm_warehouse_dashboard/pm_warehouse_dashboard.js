@@ -37,12 +37,12 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
     // Also listen directly so the dashboard refreshes even without BroadcastChannel
     (function _hook_realtime(attempt) {
         try {
-            if (frappe.realtime && typeof frappe.realtime.on === "function") {
+            if (frappe.realtime && frappe.realtime.socket) {
                 frappe.realtime.on("pm_new_approval_action", function () { _load(page); });
                 return;
             }
         } catch (_) {}
-        if (attempt < 60) setTimeout(function () { _hook_realtime(attempt + 1); }, 500);
+        if (attempt < 100) setTimeout(function () { _hook_realtime(attempt + 1); }, 300);
     })(0);
 
     _setup_events(page);
