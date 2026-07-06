@@ -26,7 +26,7 @@ def get_warehouse_dashboard_data() -> dict:
 
     mr_to_fulfill     = _get_mr_to_fulfill(warehouses)
     my_mrs            = _get_my_mrs(user)
-    pending_approvals = _enrich_approvals(_get_pending_approvals(user, roles))
+    pending_approvals = _get_pending_approvals(user, roles)
 
     transferred_today = frappe.db.count(
         "Stock Entry",
@@ -67,9 +67,9 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
         "Material Request",
         filters={
             "docstatus": 1,
-            "status": ["in", ["Submitted", "Partially Ordered"]],
             "material_request_type": "Material Transfer",
             "set_from_warehouse": ["in", warehouses],
+            "status": ["not in", ["Stopped", "Cancelled", "Ordered"]],
         },
         fields=[
             "name", "transaction_date", "status",
@@ -82,14 +82,14 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
 
 
 def _get_my_mrs(user: str) -> list:
-    """Material Requests created by this user that are still open."""
+    """Material Requests created by this user that are pending or in-progress."""
     mrs = frappe.get_all(
         "Material Request",
         filters={
-            "docstatus": 1,
+            "docstatus": ["in", [0, 1]],   # include drafts pending workflow approval
             "owner": user,
             "material_request_type": "Material Transfer",
-            "status": ["in", ["Submitted", "Partially Ordered", "Ordered"]],
+            "status": ["not in", ["Cancelled", "Stopped", "Transferred"]],
         },
         fields=[
             "name", "transaction_date", "status",
@@ -143,50 +143,46 @@ def _enrich_mrs(mr_list: list) -> list:
     return mr_list
 
 
-def _enrich_approvals(approvals: list) -> list:
-    """Attach a warehouse field to each approval for client-side filtering."""
-    if not approvals:
-        return approvals
-
-    se_names = [a["reference_name"] for a in approvals if a["reference_doctype"] == "Stock Entry"]
-    mr_names = [a["reference_name"] for a in approvals if a["reference_doctype"] == "Material Request"]
-
-    wh_map: dict = {}
-    if se_names:
-        for se in frappe.db.get_all(
-            "Stock Entry",
-            filters={"name": ["in", se_names]},
-            fields=["name", "from_warehouse", "to_warehouse"],
-        ):
-            wh_map[se.name] = se.to_warehouse or se.from_warehouse or ""
-
-    if mr_names:
-        for mr in frappe.db.get_all(
-            "Material Request",
-            filters={"name": ["in", mr_names]},
-            fields=["name", "set_from_warehouse", "set_warehouse"],
-        ):
-            wh_map[mr.name] = mr.set_from_warehouse or mr.set_warehouse or ""
-
-    for ap in approvals:
-        ap["warehouse"] = wh_map.get(ap["reference_name"], "")
-
-    return approvals
-
-
 def _get_pending_approvals(user: str, roles: set) -> list:
-    """Open PM Workflow Actions where this user is the designated approver."""
+    """
+    Open PM Workflow Actions for Stock Entry Material Transfer where this user
+    is the designated approver.  Stale actions (document has already moved to a
+    different workflow state) are filtered out so only truly-pending items show.
+    """
     if not frappe.db.table_exists("PM Workflow Action"):
         return []
 
     actions = frappe.get_all(
         "PM Workflow Action",
-        filters={"status": "Open"},
+        filters={"status": "Open", "reference_doctype": "Stock Entry"},
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "assigned_to", "creation",
         ],
     )
+    if not actions:
+        return []
+
+    # Fetch current SE state + warehouse info in one round-trip
+    se_names = list({a.reference_name for a in actions})
+    se_info: dict = {}
+    for se in frappe.db.get_all(
+        "Stock Entry",
+        filters={"name": ["in", se_names]},
+        fields=["name", "workflow_state", "docstatus", "from_warehouse", "to_warehouse"],
+    ):
+        se_info[se.name] = se
+
+    # Drop stale/cancelled actions — document moved on or was cancelled
+    actions = [
+        a for a in actions
+        if se_info.get(a.reference_name)
+        and se_info[a.reference_name].docstatus != 2
+        and (
+            not se_info[a.reference_name].workflow_state
+            or se_info[a.reference_name].workflow_state == a.workflow_state
+        )
+    ]
     if not actions:
         return []
 
@@ -225,6 +221,9 @@ def _get_pending_approvals(user: str, roles: set) -> list:
 
         if is_mine and act.name not in seen:
             seen.add(act.name)
+            se      = se_info.get(act.reference_name)
+            from_wh = (se.from_warehouse if se else "") or ""
+            to_wh   = (se.to_warehouse   if se else "") or ""
             result.append({
                 "name":              act.name,
                 "reference_doctype": act.reference_doctype,
@@ -232,6 +231,9 @@ def _get_pending_approvals(user: str, roles: set) -> list:
                 "workflow_state":    act.workflow_state,
                 "role_label":        role_label,
                 "creation":          str(act.creation),
+                "from_warehouse":    from_wh,
+                "to_warehouse":      to_wh,
+                "warehouse":         to_wh or from_wh,  # for chip-level filtering
             })
 
     return result

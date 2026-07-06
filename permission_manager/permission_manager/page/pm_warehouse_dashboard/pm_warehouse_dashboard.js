@@ -25,7 +25,7 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
         frappe.set_route("pm-approval-inbox");
     });
     page.add_inner_button(__("New Material Request"), function () {
-        frappe.new_doc("Material Request");
+        frappe.new_doc("Material Request", { material_request_type: "Material Transfer" });
     });
 
     // Auto-refresh when a PM approval arrives in another tab (BroadcastChannel
@@ -119,16 +119,17 @@ function _draw(page) {
           })
         : (d.mr_to_fulfill || []);
 
+    // My MRs: user is the TO-warehouse requester — filter by set_warehouse (destination)
     var my_mrs = _active_wh
         ? (d.my_mrs || []).filter(function (mr) {
-            return mr.set_from_warehouse === _active_wh || mr.set_warehouse === _active_wh;
+            return mr.set_warehouse === _active_wh;
           })
         : (d.my_mrs || []);
 
+    // Pending Approvals: user is the TO-warehouse acceptor — filter by to_warehouse
     var approvals = _active_wh
         ? (d.pending_approvals || []).filter(function (ap) {
-            // approvals with no warehouse data are kept visible when filtering
-            return !ap.warehouse || ap.warehouse === _active_wh;
+            return !ap.to_warehouse || ap.to_warehouse === _active_wh;
           })
         : (d.pending_approvals || []);
 
@@ -270,6 +271,15 @@ function _approval_item(ap) {
     var e        = frappe.utils.escape_html;
     var date_str = ap.creation ? ap.creation.substring(0, 10) : "";
 
+    // Warehouse route: from → to
+    var wh_route = (ap.from_warehouse || ap.to_warehouse)
+        ? '<div class="wh-route">'
+            + '<span class="wh-wh wh-from">' + e(ap.from_warehouse || "—") + "</span>"
+            + '<span class="wh-arrow">→</span>'
+            + '<span class="wh-wh wh-to">' + e(ap.to_warehouse || "—") + "</span>"
+            + "</div>"
+        : "";
+
     return '<div class="wh-item" data-doctype="' + e(ap.reference_doctype) + '" data-name="' + e(ap.reference_name) + '">'
         + '<div class="wh-item-info">'
         + '<span class="wh-item-name">' + e(ap.reference_name) + "</span>"
@@ -278,6 +288,7 @@ function _approval_item(ap) {
         + '<span class="wh-arrow">›</span>'
         + '<span class="wh-state">' + e(ap.workflow_state || "") + "</span>"
         + "</div>"
+        + wh_route
         + "</div>"
         + '<div class="wh-item-meta">'
         + '<div class="wh-date-lbl">' + frappe.datetime.str_to_user(date_str) + "</div>"
