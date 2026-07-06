@@ -26,7 +26,7 @@ def get_warehouse_dashboard_data() -> dict:
 
     mr_to_fulfill     = _get_mr_to_fulfill(warehouses)
     my_mrs            = _get_my_mrs(user)
-    pending_approvals = _get_pending_approvals(user, roles)
+    pending_approvals = _get_pending_approvals(user, roles, warehouses)
 
     transferred_today = frappe.db.count(
         "Stock Entry",
@@ -69,13 +69,13 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
             "docstatus": 1,
             "material_request_type": "Material Transfer",
             "set_from_warehouse": ["in", warehouses],
-            "status": ["not in", ["Stopped", "Cancelled", "Ordered"]],
+            "status": ["not in", ["Stopped", "Cancelled", "Ordered", "Transferred"]],
         },
         fields=[
             "name", "transaction_date", "status",
             "set_from_warehouse", "set_warehouse", "owner",
         ],
-        order_by="transaction_date asc",
+        order_by="transaction_date desc",
         limit=50,
     )
     return _enrich_mrs(mrs)
@@ -143,11 +143,16 @@ def _enrich_mrs(mr_list: list) -> list:
     return mr_list
 
 
-def _get_pending_approvals(user: str, roles: set) -> list:
+def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
     """
-    Open PM Workflow Actions for Stock Entry Material Transfer where this user
-    is the designated approver.  Stale actions (document has already moved to a
-    different workflow state) are filtered out so only truly-pending items show.
+    Open PM Workflow Actions for Stock Entry Material Transfer scoped to the
+    user's default warehouse(s) as the destination.
+
+    The destination warehouse is resolved from:
+      1. Stock Entry header field `to_warehouse`
+      2. First row of `tabStock Entry Detail`.`t_warehouse` when header is blank
+
+    Stale actions (document already moved to a different state) are dropped.
     """
     if not frappe.db.table_exists("PM Workflow Action"):
         return []
@@ -163,7 +168,7 @@ def _get_pending_approvals(user: str, roles: set) -> list:
     if not actions:
         return []
 
-    # Fetch current SE state + warehouse info in one round-trip
+    # Fetch current SE state + header warehouse in one round-trip
     se_names = list({a.reference_name for a in actions})
     se_info: dict = {}
     for se in frappe.db.get_all(
@@ -172,6 +177,37 @@ def _get_pending_approvals(user: str, roles: set) -> list:
         fields=["name", "workflow_state", "docstatus", "from_warehouse", "to_warehouse"],
     ):
         se_info[se.name] = se
+
+    # For SEs with no header-level to_warehouse, resolve from first item row
+    ses_without_header_wh = [
+        name for name, se in se_info.items() if not se.to_warehouse
+    ]
+    if ses_without_header_wh:
+        item_rows = frappe.db.sql(
+            """
+            SELECT parent, t_warehouse
+            FROM   `tabStock Entry Detail`
+            WHERE  parent IN %(names)s
+              AND  t_warehouse IS NOT NULL AND t_warehouse != ''
+            ORDER  BY parent, idx ASC
+            """,
+            {"names": ses_without_header_wh},
+            as_dict=True,
+        )
+        seen_parents: set = set()
+        for row in item_rows:
+            if row.parent not in seen_parents:
+                se_info[row.parent].to_warehouse = row.t_warehouse
+                seen_parents.add(row.parent)
+
+    # Keep only SEs whose destination is in the user's default warehouses
+    if warehouses:
+        wh_set = set(warehouses)
+        in_scope = {
+            name for name, se in se_info.items()
+            if se.to_warehouse and se.to_warehouse in wh_set
+        }
+        actions = [a for a in actions if a.reference_name in in_scope]
 
     # Drop stale/cancelled actions — document moved on or was cancelled
     actions = [

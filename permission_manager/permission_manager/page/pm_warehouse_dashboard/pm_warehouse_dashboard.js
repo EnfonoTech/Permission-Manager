@@ -5,8 +5,9 @@
 //   • Pending PM Workflow approvals
 
 // Module-level state — persists across on_page_show calls
-var _dash_data = null;   // last API response
-var _active_wh = null;   // selected warehouse chip (null = show all)
+var _dash_data        = null;   // last API response
+var _active_wh        = null;   // selected warehouse chip (null = show all)
+var _fulfill_wh_filter = null;  // destination warehouse filter inside "To Fulfil"
 
 frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
     var page = frappe.ui.make_app_page({
@@ -18,7 +19,8 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
     _inject_css();
 
     page.add_inner_button(__("Refresh"), function () {
-        _active_wh = null;
+        _active_wh        = null;
+        _fulfill_wh_filter = null;
         _load(page);
     });
     page.add_inner_button(__("My Approvals"), function () {
@@ -66,19 +68,16 @@ function _setup_events(page) {
         _draw(page);
     });
 
-    // Item row → open form (but not when clicking the action button inside it)
-    page.main.on("click", ".wh-item[data-doctype][data-name]", function (e) {
-        if ($(e.target).closest(".wh-action-btn").length) return;
-        frappe.set_route("Form", $(this).data("doctype"), $(this).data("name"));
+    // Destination warehouse filter inside "To Fulfil" section
+    page.main.on("click", ".wh-ff-chip", function () {
+        var wh = $(this).data("ff-wh") || null;
+        _fulfill_wh_filter = (_fulfill_wh_filter === wh) ? null : wh;
+        _draw(page);
     });
 
-    // Create Transfer button
-    page.main.on("click", ".wh-action-btn[data-action='new-se']", function (e) {
-        e.stopPropagation();
-        frappe.new_doc("Stock Entry", {
-            purpose: "Material Transfer",
-            material_request: $(this).data("mr"),
-        });
+    // Item row → open form
+    page.main.on("click", ".wh-item[data-doctype][data-name]", function () {
+        frappe.set_route("Form", $(this).data("doctype"), $(this).data("name"));
     });
 }
 
@@ -172,9 +171,34 @@ function _draw(page) {
 
     html += '<div class="wh-col">';
     html += '<div class="wh-col-hdr"><span>📋</span> ' + __("Material Requests to Fulfil") + "</div>";
-    if (mr_fulfill.length) {
+
+    // Destination warehouse filter — chips for each unique to-warehouse
+    var dest_whs = [];
+    mr_fulfill.forEach(function (mr) {
+        if (mr.set_warehouse && dest_whs.indexOf(mr.set_warehouse) === -1) {
+            dest_whs.push(mr.set_warehouse);
+        }
+    });
+    if (dest_whs.length > 1) {
+        html += '<div class="wh-ff-bar">';
+        html += '<span class="wh-ff-label">' + __("To:") + "</span>";
+        var all_active = !_fulfill_wh_filter ? " wh-ff-active" : "";
+        html += '<span class="wh-ff-chip' + all_active + '" data-ff-wh="">' + __("All") + "</span>";
+        dest_whs.forEach(function (wh) {
+            var act = (_fulfill_wh_filter === wh) ? " wh-ff-active" : "";
+            html += '<span class="wh-ff-chip' + act + '" data-ff-wh="' + e(wh) + '">' + e(wh) + "</span>";
+        });
+        html += "</div>";
+    }
+
+    // Apply destination filter
+    var mr_fulfill_shown = _fulfill_wh_filter
+        ? mr_fulfill.filter(function (mr) { return mr.set_warehouse === _fulfill_wh_filter; })
+        : mr_fulfill;
+
+    if (mr_fulfill_shown.length) {
         html += '<div class="wh-list">';
-        mr_fulfill.forEach(function (mr) { html += _mr_item(mr, "fulfill"); });
+        mr_fulfill_shown.forEach(function (mr) { html += _mr_item(mr, "fulfill"); });
         html += "</div>";
     } else {
         html += _empty_panel(__("No pending requests from your warehouse"));
@@ -248,11 +272,6 @@ function _mr_item(mr, mode) {
 
     meta += '<span class="wh-status wh-status-' + status.toLowerCase().replace(/ /g, "-") + '">'
         + e(__(status)) + "</span>";
-
-    if (mode === "fulfill") {
-        meta += '<button class="wh-action-btn" data-action="new-se" data-mr="' + e(mr.name) + '">'
-            + __("Create Transfer") + "</button>";
-    }
 
     return '<div class="' + cls + '" data-doctype="Material Request" data-name="' + e(mr.name) + '">'
         + '<div class="wh-item-info">'
@@ -623,6 +642,40 @@ function _inject_css() {
     white-space: nowrap;
 }
 .wh-action-btn:hover { opacity: .85; }
+
+/* ── To-Fulfil destination filter bar ─── */
+.wh-ff-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--control-bg);
+    border: 1px solid var(--border-color);
+    border-top: none;
+}
+.wh-ff-label {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .5px;
+    color: var(--text-muted);
+    margin-right: 2px;
+}
+.wh-ff-chip {
+    font-size: 10px; font-weight: 600;
+    padding: 2px 9px; border-radius: 20px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    white-space: nowrap;
+}
+.wh-ff-chip:hover { border-color: var(--primary); color: var(--primary); }
+.wh-ff-active {
+    background: var(--primary) !important;
+    color: #fff !important;
+    border-color: var(--primary) !important;
+}
 
 .wh-empty {
     text-align: center;
