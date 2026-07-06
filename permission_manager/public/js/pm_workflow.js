@@ -115,8 +115,8 @@ function _load_pending_approver_info(frm) {
 			const assigned_name = action.assigned_to_name || (assigned_to || "").split("@")[0];
 			const pending_roles = action.pending_roles || [];
 
-			// Prefer the resolved user name; fall back to the role name(s) for role-based routing.
-			const display_name = assigned_name || pending_roles.join(", ");
+			// Show role(s) when the workflow is role-based; fall back to user name for direct assignments.
+			const display_name = pending_roles.length ? pending_roles.join(", ") : assigned_name;
 
 			if (display_name) {
 				if (!frm.$wrapper.find(".pm-approver-info").length) {

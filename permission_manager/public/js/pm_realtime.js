@@ -93,22 +93,23 @@ if (_pm_bc) {
     };
 }
 
-// Use setTimeout(0) so realtime setup runs after the bundle IIFE completes and
-// all globals (window.pm_approval_inbox etc.) are guaranteed to be set.
-setTimeout(() => {
+// Retry until frappe.realtime.on is available (socket is initialized asynchronously
+// during Frappe boot; setTimeout(0) is too early on slow connections).
+(function _setup_realtime(attempt) {
     try {
-        _request_notification_permission();
-
         if (frappe.realtime && typeof frappe.realtime.on === "function") {
+            _request_notification_permission();
             frappe.realtime.on("pm_new_approval_action", (data) => {
                 try {
-                    // Broadcast to all other same-origin tabs so they can play the chime
-                    // even if the user isn't looking at this tab
                     if (_pm_bc) _pm_bc.postMessage(data);
-
                     _handle_approval_event(data);
                 } catch (_) {}
             });
+            return; // registered successfully
         }
     } catch (_) {}
-}, 0);
+    // Not ready yet — retry every 500 ms for up to 30 seconds
+    if (attempt < 60) {
+        setTimeout(() => _setup_realtime(attempt + 1), 500);
+    }
+})(0);

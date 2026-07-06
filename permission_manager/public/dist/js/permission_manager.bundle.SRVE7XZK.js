@@ -118,7 +118,7 @@
         const assigned_to = action.assigned_to;
         const assigned_name = action.assigned_to_name || (assigned_to || "").split("@")[0];
         const pending_roles = action.pending_roles || [];
-        const display_name = assigned_name || pending_roles.join(", ");
+        const display_name = pending_roles.length ? pending_roles.join(", ") : assigned_name;
         if (display_name) {
           if (!frm.$wrapper.find(".pm-approver-info").length) {
             const $info = $(`
@@ -399,10 +399,10 @@
       }
     };
   }
-  setTimeout(() => {
+  (function _setup_realtime(attempt) {
     try {
-      _request_notification_permission();
       if (frappe.realtime && typeof frappe.realtime.on === "function") {
+        _request_notification_permission();
         frappe.realtime.on("pm_new_approval_action", (data) => {
           try {
             if (_pm_bc)
@@ -411,10 +411,14 @@
           } catch (_) {
           }
         });
+        return;
       }
     } catch (_) {
     }
-  }, 0);
+    if (attempt < 60) {
+      setTimeout(() => _setup_realtime(attempt + 1), 500);
+    }
+  })(0);
 
   // ../permission_manager/permission_manager/public/js/utils/helpers.js
   var MATRIX_RIGHTS = [
@@ -5181,4 +5185,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.IGFB7SPW.js.map
+//# sourceMappingURL=permission_manager.bundle.SRVE7XZK.js.map

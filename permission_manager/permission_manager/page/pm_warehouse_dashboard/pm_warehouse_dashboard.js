@@ -4,6 +4,9 @@ var _dash_data          = null;
 var _active_wh          = null;   // top-level warehouse chip filter
 var _fulfill_wh_filter  = null;   // To Fulfil → destination warehouse
 var _fulfill_pri_filter = null;   // To Fulfil → custom_priority
+var _refresh_timer      = null;   // periodic auto-refresh handle
+
+var _AUTO_REFRESH_MS    = 60000;  // refresh every 60 s while the page is visible
 
 frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
     var page = frappe.ui.make_app_page({
@@ -25,10 +28,22 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
         frappe.new_doc("Material Request", { material_request_type: "Material Transfer" });
     });
 
+    // Refresh dashboard when a new approval event arrives (realtime or cross-tab)
     try {
         var bc = new BroadcastChannel("pm_approval_notifications");
-        bc.onmessage = function () { if (_dash_data) _load(page); };
+        bc.onmessage = function () { _load(page); };
     } catch (_) {}
+
+    // Also listen directly so the dashboard refreshes even without BroadcastChannel
+    (function _hook_realtime(attempt) {
+        try {
+            if (frappe.realtime && typeof frappe.realtime.on === "function") {
+                frappe.realtime.on("pm_new_approval_action", function () { _load(page); });
+                return;
+            }
+        } catch (_) {}
+        if (attempt < 60) setTimeout(function () { _hook_realtime(attempt + 1); }, 500);
+    })(0);
 
     _setup_events(page);
     wrapper._wh_page = page;
@@ -36,7 +51,19 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["pm-warehouse-dashboard"].on_page_show = function (wrapper) {
-    if (wrapper._wh_page) _load(wrapper._wh_page);
+    var page = wrapper._wh_page;
+    if (!page) return;
+    _load(page);
+    // Start periodic refresh while the page is visible
+    if (!_refresh_timer) {
+        _refresh_timer = setInterval(function () {
+            if (document.visibilityState !== "hidden") _load(page);
+        }, _AUTO_REFRESH_MS);
+    }
+};
+
+frappe.pages["pm-warehouse-dashboard"].on_page_hide = function () {
+    if (_refresh_timer) { clearInterval(_refresh_timer); _refresh_timer = null; }
 };
 
 // ── Events (delegated — survive re-renders) ────────────────────────────────────
