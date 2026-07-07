@@ -129,6 +129,20 @@ def process_workflow_actions(doc, state):
 
     current_state = get_doc_workflow_state(doc)
 
+    # If the document has never had a PM Workflow state written (newly created docs),
+    # persist the initial state now so server scripts can read it via get_db_value().
+    if not current_state:
+        from ...workflow import get_workflow as _get_workflow
+        _wf = _get_workflow(doc.get("doctype"), doc.get("name"))
+        if _wf and _wf.states:
+            initial_state = _wf.states[0].state
+            frappe.db.set_value(
+                doc.get("doctype"), doc.get("name"),
+                _wf.workflow_state_field, initial_state,
+                update_modified=False,
+            )
+            current_state = initial_state
+
     # Close Open AND Forwarded actions from previous states, stamp who triggered the transition.
     _WA = DocType("PM Workflow Action")
     (
