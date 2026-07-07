@@ -17,6 +17,29 @@ function _action_btn_class(action_name) {
     return "btn-default";
 }
 
+// Rank actions so the positive/primary action (Accept, Approve…) comes first
+// and the negative one (Reject, Return…) last. This drives both the on-screen
+// button order AND the bulk-action indexing (index 0 = approve, 1 = reject),
+// keeping the two in sync.
+function _action_rank(action_name) {
+    const cls = _action_btn_class(action_name);
+    if (cls === "btn-success") return 0;
+    if (cls === "btn-danger")  return 2;
+    return 1;
+}
+
+// Reorder each item's available_actions in place using the semantic rank.
+// Array.sort is stable, so actions of equal rank keep their original order.
+function _order_actions(data) {
+    (data && data.groups || []).forEach((g) => {
+        (g.items || []).forEach((item) => {
+            if (Array.isArray(item.available_actions)) {
+                item.available_actions.sort((a, b) => _action_rank(a) - _action_rank(b));
+            }
+        });
+    });
+}
+
 const PRIORITY_CLASS = {
     Critical: "ps-ai-pri-critical",
     Urgent:   "ps-ai-pri-urgent",
@@ -142,6 +165,7 @@ export class ApprovalInbox {
             method: "permission_manager.permission_manager.api.approvals.get_my_pending_approvals",
             callback: (r) => {
                 this.data = r.message || { groups: [], total: 0 };
+                _order_actions(this.data);   // Accept before Reject, everywhere
                 this._switch_tab(this._active_tab);
             },
             error: () => {

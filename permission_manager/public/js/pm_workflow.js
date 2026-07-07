@@ -84,6 +84,7 @@ function _load_allowed_transitions(frm, workflow, current_state) {
 		callback(r) {
 			const transitions = r.message || [];
 			frm.page.clear_actions_menu();
+			frm._pm_transitions = transitions;
 			if (!transitions.length) return;
 
 			transitions.forEach((t) => {
@@ -93,6 +94,9 @@ function _load_allowed_transitions(frm, workflow, current_state) {
 					_open_comment_dialog(frm, t);
 				});
 			});
+
+			// Nudge the user to act after they attach a supporting file
+			_pm_hook_attachment_announcement(frm);
 
 			_add_workflow_help_action(frm, transitions, current_state);
 		},
@@ -324,7 +328,7 @@ function _apply_workflow_with_comment(frm, action, comment, priority) {
 		callback(r) {
 			frappe.dom.unfreeze();
 			frm._pm_pending_action = null;
-			frm.set_intro("");
+			frm.dashboard.clear_headline();
 			frappe.model.sync(r.message);
 			frm.refresh();
 			frappe.show_alert({
@@ -336,7 +340,7 @@ function _apply_workflow_with_comment(frm, action, comment, priority) {
 			frappe.dom.unfreeze();
 			if (_pm_is_attachment_error(xhr)) {
 				frm._pm_pending_action = { action, comment, priority };
-				_pm_hook_attachment_banner(frm);
+				_pm_hook_attachment_announcement(frm);
 			}
 			// Always show the original server error message
 			frappe.request.report_error(xhr, {});
@@ -358,37 +362,90 @@ function _pm_is_attachment_error(xhr) {
 	}
 }
 
-// Hook into the form's attachment upload event (once per form).
-// After the user uploads a file, show a persistent red banner with an
-// inline action button so the user can proceed without hunting the Actions menu.
-function _pm_hook_attachment_banner(frm) {
-	if (frm._pm_attach_hooked) return;
-	frm._pm_attach_hooked = true;
+// Install a one-time hook on the form's attachment-upload event. After a file
+// is uploaded we surface an announcement so the user doesn't forget to click
+// the workflow action. Used both proactively (whenever transitions are
+// available) and reactively (after a "require attachment" block).
+//
+// The "already hooked" flag lives on the attachments object — not on frm —
+// because render_form() recreates frm.attachments on every re-render, which
+// would otherwise drop our patch while a frm-level flag stayed set.
+function _pm_hook_attachment_announcement(frm) {
+	const att = frm.attachments;
+	if (!att || typeof att.attachment_uploaded !== "function") return;
+	if (att._pm_hooked) return;
+	att._pm_hooked = true;
 
-	const _orig = frm.attachments.attachment_uploaded.bind(frm.attachments);
-	frm.attachments.attachment_uploaded = function (file_doc) {
+	const _orig = att.attachment_uploaded.bind(att);
+	att.attachment_uploaded = function (file_doc) {
 		_orig(file_doc);
-		if (frm._pm_pending_action) {
-			_pm_show_attachment_banner(frm, frm._pm_pending_action);
-		}
+		_pm_on_attachment(frm);
 	};
 }
 
+function _pm_on_attachment(frm) {
+	// A specific action was just blocked for a missing attachment — offer that
+	// exact action so one click completes it (comment/priority already captured).
+	if (frm._pm_pending_action) {
+		_pm_show_attachment_banner(frm, frm._pm_pending_action);
+		return;
+	}
+	// Otherwise proactively remind the user of the actions now available.
+	const transitions = frm._pm_transitions || [];
+	if (transitions.length) {
+		_pm_show_action_announcement(frm, transitions);
+	}
+}
+
+// Reactive banner — the exact action that was blocked, one click to proceed.
 function _pm_show_attachment_banner(frm, pending) {
 	const label = __(pending.action);
-	frm.set_intro(
+	frm.dashboard.clear_headline();
+	frm.dashboard.set_headline(
 		`<span style="color:#dc3545;font-weight:bold">⚠</span>&nbsp;&nbsp;` +
-		`${__("File attached.")} &nbsp;` +
+		`<strong>${__("File attached.")}</strong>&nbsp;` +
+		`${__("Click to continue:")}&nbsp;` +
 		`<button class="btn btn-xs btn-danger pm-wf-proceed-btn" style="margin-left:4px">` +
 		`${label} &rarr;</button>`,
 		"red"
 	);
-	// Bind after set_intro writes to the DOM
+	// Bind after the headline is written to the DOM
 	setTimeout(function () {
 		frm.$wrapper.find(".pm-wf-proceed-btn").off("click").on("click", function () {
 			frm._pm_pending_action = null;
-			frm.set_intro("");
+			frm.dashboard.clear_headline();
 			_apply_workflow_with_comment(frm, pending.action, pending.comment, pending.priority);
+		});
+	}, 0);
+}
+
+// Proactive announcement — file attached, here are the next workflow actions.
+function _pm_show_action_announcement(frm, transitions) {
+	const e = frappe.utils.escape_html;
+	let btns = "";
+	transitions.forEach(function (t, i) {
+		btns +=
+			`<button class="btn btn-xs btn-primary pm-wf-ann-btn" data-idx="${i}" ` +
+			`style="margin-left:6px;margin-top:2px">${e(__(t.action))} &rarr;</button>`;
+	});
+
+	frm.dashboard.clear_headline();
+	frm.dashboard.set_headline(
+		`<span style="font-size:15px">📎</span>&nbsp;&nbsp;` +
+		`<strong>${__("File attached.")}</strong>&nbsp;` +
+		`${__("Don't forget to apply the next step:")}${btns}`,
+		"orange"
+	);
+
+	// Bind after the headline is written to the DOM
+	setTimeout(function () {
+		frm.$wrapper.find(".pm-wf-ann-btn").off("click").on("click", function () {
+			const t = transitions[parseInt($(this).attr("data-idx"), 10)];
+			if (!t) return;
+			frm.dashboard.clear_headline();
+			frm.selected_workflow_action = t.action;
+			if (!_check_mandatory(frm)) return;
+			_open_comment_dialog(frm, t);
 		});
 	}, 0);
 }

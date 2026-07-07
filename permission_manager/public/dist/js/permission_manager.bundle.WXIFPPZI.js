@@ -91,6 +91,7 @@
       callback(r) {
         const transitions = r.message || [];
         frm.page.clear_actions_menu();
+        frm._pm_transitions = transitions;
         if (!transitions.length)
           return;
         transitions.forEach((t) => {
@@ -101,6 +102,7 @@
             _open_comment_dialog(frm, t);
           });
         });
+        _pm_hook_attachment_announcement(frm);
         _add_workflow_help_action(frm, transitions, current_state);
       }
     });
@@ -307,7 +309,7 @@
       callback(r) {
         frappe.dom.unfreeze();
         frm._pm_pending_action = null;
-        frm.set_intro("");
+        frm.dashboard.clear_headline();
         frappe.model.sync(r.message);
         frm.refresh();
         frappe.show_alert({
@@ -319,7 +321,7 @@
         frappe.dom.unfreeze();
         if (_pm_is_attachment_error(xhr)) {
           frm._pm_pending_action = { action, comment, priority };
-          _pm_hook_attachment_banner(frm);
+          _pm_hook_attachment_announcement(frm);
         }
         frappe.request.report_error(xhr, {});
       }
@@ -337,29 +339,65 @@
       return false;
     }
   }
-  function _pm_hook_attachment_banner(frm) {
-    if (frm._pm_attach_hooked)
+  function _pm_hook_attachment_announcement(frm) {
+    const att = frm.attachments;
+    if (!att || typeof att.attachment_uploaded !== "function")
       return;
-    frm._pm_attach_hooked = true;
-    const _orig = frm.attachments.attachment_uploaded.bind(frm.attachments);
-    frm.attachments.attachment_uploaded = function(file_doc) {
+    if (att._pm_hooked)
+      return;
+    att._pm_hooked = true;
+    const _orig = att.attachment_uploaded.bind(att);
+    att.attachment_uploaded = function(file_doc) {
       _orig(file_doc);
-      if (frm._pm_pending_action) {
-        _pm_show_attachment_banner(frm, frm._pm_pending_action);
-      }
+      _pm_on_attachment(frm);
     };
+  }
+  function _pm_on_attachment(frm) {
+    if (frm._pm_pending_action) {
+      _pm_show_attachment_banner(frm, frm._pm_pending_action);
+      return;
+    }
+    const transitions = frm._pm_transitions || [];
+    if (transitions.length) {
+      _pm_show_action_announcement(frm, transitions);
+    }
   }
   function _pm_show_attachment_banner(frm, pending) {
     const label = __(pending.action);
-    frm.set_intro(
-      `<span style="color:#dc3545;font-weight:bold">\u26A0</span>&nbsp;&nbsp;${__("File attached.")} &nbsp;<button class="btn btn-xs btn-danger pm-wf-proceed-btn" style="margin-left:4px">${label} &rarr;</button>`,
+    frm.dashboard.clear_headline();
+    frm.dashboard.set_headline(
+      `<span style="color:#dc3545;font-weight:bold">\u26A0</span>&nbsp;&nbsp;<strong>${__("File attached.")}</strong>&nbsp;${__("Click to continue:")}&nbsp;<button class="btn btn-xs btn-danger pm-wf-proceed-btn" style="margin-left:4px">${label} &rarr;</button>`,
       "red"
     );
     setTimeout(function() {
       frm.$wrapper.find(".pm-wf-proceed-btn").off("click").on("click", function() {
         frm._pm_pending_action = null;
-        frm.set_intro("");
+        frm.dashboard.clear_headline();
         _apply_workflow_with_comment(frm, pending.action, pending.comment, pending.priority);
+      });
+    }, 0);
+  }
+  function _pm_show_action_announcement(frm, transitions) {
+    const e = frappe.utils.escape_html;
+    let btns = "";
+    transitions.forEach(function(t, i) {
+      btns += `<button class="btn btn-xs btn-primary pm-wf-ann-btn" data-idx="${i}" style="margin-left:6px;margin-top:2px">${e(__(t.action))} &rarr;</button>`;
+    });
+    frm.dashboard.clear_headline();
+    frm.dashboard.set_headline(
+      `<span style="font-size:15px">\u{1F4CE}</span>&nbsp;&nbsp;<strong>${__("File attached.")}</strong>&nbsp;${__("Don't forget to apply the next step:")}${btns}`,
+      "orange"
+    );
+    setTimeout(function() {
+      frm.$wrapper.find(".pm-wf-ann-btn").off("click").on("click", function() {
+        const t = transitions[parseInt($(this).attr("data-idx"), 10)];
+        if (!t)
+          return;
+        frm.dashboard.clear_headline();
+        frm.selected_workflow_action = t.action;
+        if (!_check_mandatory(frm))
+          return;
+        _open_comment_dialog(frm, t);
       });
     }, 0);
   }
@@ -2390,6 +2428,23 @@
       return "btn-danger";
     return "btn-default";
   }
+  function _action_rank(action_name) {
+    const cls = _action_btn_class(action_name);
+    if (cls === "btn-success")
+      return 0;
+    if (cls === "btn-danger")
+      return 2;
+    return 1;
+  }
+  function _order_actions(data) {
+    (data && data.groups || []).forEach((g) => {
+      (g.items || []).forEach((item) => {
+        if (Array.isArray(item.available_actions)) {
+          item.available_actions.sort((a, b) => _action_rank(a) - _action_rank(b));
+        }
+      });
+    });
+  }
   var PRIORITY_CLASS = {
     Critical: "ps-ai-pri-critical",
     Urgent: "ps-ai-pri-urgent",
@@ -2503,6 +2558,7 @@
         method: "permission_manager.permission_manager.api.approvals.get_my_pending_approvals",
         callback: (r) => {
           this.data = r.message || { groups: [], total: 0 };
+          _order_actions(this.data);
           this._switch_tab(this._active_tab);
         },
         error: () => {
@@ -5276,4 +5332,4 @@
   });
   window.pm_approval_inbox = { ApprovalInbox };
 })();
-//# sourceMappingURL=permission_manager.bundle.JAUVCYKN.js.map
+//# sourceMappingURL=permission_manager.bundle.WXIFPPZI.js.map

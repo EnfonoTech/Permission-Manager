@@ -22,7 +22,7 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
         _load(page);
     });
     page.add_inner_button(__("My Approvals"), function () {
-        frappe.set_route("pm-approval-inbox");
+        _focus_section(page, ".wh-col-approvals");
     });
     page.add_inner_button(__("New Material Request"), function () {
         frappe.new_doc("Material Request", { material_request_type: "Material Transfer" });
@@ -83,6 +83,21 @@ function _setup_events(page) {
         _draw(page);
     });
 
+    // KPI card → jump to its section (or drill into today's transfers)
+    page.main.on("click", ".wh-kpi-clickable[data-target]", function () {
+        var target = $(this).data("target");
+        if (target === "@transferred") {
+            frappe.set_route("List", "Stock Entry", {
+                purpose: "Material Transfer",
+                docstatus: 1,
+                posting_date: frappe.datetime.get_today(),
+                owner: frappe.session.user,
+            });
+            return;
+        }
+        _focus_section(page, target);
+    });
+
     // To Fulfil: destination warehouse chip
     page.main.on("click", ".wh-ff-chip[data-ff-wh]", function () {
         var wh = $(this).data("ff-wh") || null;
@@ -119,6 +134,22 @@ function _load(page) {
     });
 }
 
+// ── Scroll to and briefly highlight an on-page section ──────────────────────────
+// Used by the "My Approvals" button and the clickable KPI cards. Keeps the user
+// on the dashboard (the data is already here) instead of navigating away, which
+// only caused confusion.
+function _focus_section(page, selector) {
+    var $sec = page.main.find(selector);
+    if (!$sec.length) return;
+    var el = $sec.get(0);
+    if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    $sec.removeClass("wh-flash");
+    // reflow so the animation restarts even on repeated clicks
+    void el.offsetWidth;
+    $sec.addClass("wh-flash");
+    setTimeout(function () { $sec.removeClass("wh-flash"); }, 1600);
+}
+
 // ── Draw ───────────────────────────────────────────────────────────────────────
 
 function _draw(page) {
@@ -142,7 +173,9 @@ function _draw(page) {
     // ── Header ────────────────────────────────────────────────────────
     var wh_chips = (d.warehouses || []).map(function (w) {
         var cls = "wh-chip" + (_active_wh === w ? " wh-chip-active" : "");
-        return '<span class="' + cls + '" data-wh="' + e(w) + '">' + e(w) + "</span>";
+        var n = _wh_count(d, w);
+        var badge = n ? '<span class="wh-chip-badge">' + n + "</span>" : "";
+        return '<span class="' + cls + '" data-wh="' + e(w) + '">' + e(w) + badge + "</span>";
     }).join("");
 
     var html = '<div class="wh-dash">';
@@ -164,10 +197,10 @@ function _draw(page) {
 
     // ── KPI row ───────────────────────────────────────────────────────
     html += '<div class="wh-kpi-row">';
-    html += _kpi("📋", mr_fulfill.length,             __("To Fulfil"),         "fulfil");
-    html += _kpi("📬", my_mrs.length,                 __("My Open Requests"),  "my");
-    html += _kpi("⏳", approvals.length,              __("Pending Approvals"), "approval");
-    html += _kpi("✅", (d.kpis || {}).transferred_today || 0, __("Transferred Today"), "done");
+    html += _kpi("📋", mr_fulfill.length,             __("To Fulfil"),         "fulfil",   ".wh-col-fulfill");
+    html += _kpi("📬", my_mrs.length,                 __("My Open Requests"),  "my",       ".wh-section-my");
+    html += _kpi("⏳", approvals.length,              __("Pending Approvals"), "approval", ".wh-col-approvals");
+    html += _kpi("✅", (d.kpis || {}).transferred_today || 0, __("Transferred Today"), "done", "@transferred");
     html += "</div>";
 
     // ── Main grid: 3 columns ──────────────────────────────────────────
@@ -251,7 +284,7 @@ function _draw(page) {
     html += "</div>"; // .wh-grid
 
     // ── My Material Requests (full width) ────────────────────────────
-    html += '<div class="wh-section">';
+    html += '<div class="wh-section wh-section-my">';
     html += '<div class="wh-col-hdr wh-hdr-full"><span>📬</span> ' + __("My Material Requests")
         + '<span class="wh-col-count">' + my_mrs.length + "</span></div>";
     if (my_mrs.length) {
@@ -323,6 +356,7 @@ function _mr_row(mr) {
         + '<div class="wh-row-meta">'
         + req_html
         + '<span class="wh-date-lbl">' + frappe.datetime.str_to_user(mr.transaction_date) + "</span>"
+        + _days_badge(mr.days)
         + count_html
         + '<span class="wh-st wh-st-' + status.toLowerCase().replace(/ /g, "-") + '">' + e(__(status)) + "</span>"
         + "</div>"
@@ -349,6 +383,7 @@ function _approval_row(ap) {
         + wh_html
         + '<div class="wh-row-meta">'
         + '<span class="wh-date-lbl">' + frappe.datetime.str_to_user(date_str) + "</span>"
+        + _days_badge(ap.days)
         + '<span class="wh-role">' + e(ap.role_label || "") + "</span>"
         + "</div>"
         + "</div>";
@@ -356,12 +391,37 @@ function _approval_row(ap) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function _kpi(emoji, value, label, type) {
-    return '<div class="wh-kpi-card wh-kpi-' + type + '">'
+function _kpi(emoji, value, label, type, target) {
+    var clickable = target ? " wh-kpi-clickable" : "";
+    var attr = target ? ' data-target="' + frappe.utils.escape_html(target) + '"' : "";
+    return '<div class="wh-kpi-card wh-kpi-' + type + clickable + '"' + attr + ">"
         + '<div class="wh-kpi-top"><span class="wh-kpi-emoji">' + emoji + "</span>"
         + '<span class="wh-kpi-label">' + frappe.utils.escape_html(label) + "</span></div>"
         + '<div class="wh-kpi-value">' + value + "</div>"
         + "</div>";
+}
+
+// Count of actionable items tied to a warehouse (drives the chip badges)
+function _wh_count(d, wh) {
+    var n = 0;
+    (d.mr_to_fulfill || []).forEach(function (mr) { if (mr.set_from_warehouse === wh) n++; });
+    (d.my_mrs || []).forEach(function (mr) { if (mr.set_warehouse === wh) n++; });
+    (d.pending_approvals || []).forEach(function (ap) { if (ap.to_warehouse === wh) n++; });
+    return n;
+}
+
+// "Waiting time" badge, colour-coded by how long an item has been open
+function _days_badge(days) {
+    var n = parseInt(days, 10);
+    if (isNaN(n)) return "";
+    var cls, label;
+    if (n <= 0)       { cls = "wh-days-ok";   label = __("Today"); }
+    else if (n === 1) { cls = "wh-days-ok";   label = __("1 day"); }
+    else {
+        cls   = n > 30 ? "wh-days-crit" : (n > 7 ? "wh-days-warn" : "wh-days-ok");
+        label = __("{0} days", [n]);
+    }
+    return '<span class="wh-days ' + cls + '">' + label + "</span>";
 }
 
 function _empty_panel(msg) {
@@ -423,6 +483,10 @@ function _inject_css() {
 .wh-chip[data-wh]:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
 .wh-chip-active { background: var(--primary) !important; color: #fff !important; border-color: var(--primary) !important; }
 .wh-chip-muted { color: var(--text-muted); font-weight: 400; }
+.wh-chip-badge { display: inline-block; margin-left: 5px; padding: 0 5px; border-radius: 9px;
+    font-size: 9px; font-weight: 800; line-height: 15px; min-width: 15px; text-align: center;
+    background: var(--primary); color: #fff; }
+.wh-chip-active .wh-chip-badge { background: #fff; color: var(--primary); }
 .wh-filter-note { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; }
 .wh-clear-filter { color: var(--primary); cursor: pointer; text-decoration: underline; }
 .wh-date { font-size: 11px; color: var(--text-muted); background: var(--control-bg);
@@ -448,10 +512,22 @@ function _inject_css() {
 .wh-kpi-my .wh-kpi-value       { color: #2563eb; }
 .wh-kpi-approval .wh-kpi-value { color: #dc2626; }
 .wh-kpi-done .wh-kpi-value     { color: #059669; }
+/* clickable KPI cards */
+.wh-kpi-clickable { cursor: pointer; }
+.wh-kpi-clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.10); }
+.wh-kpi-clickable:active { transform: translateY(0); }
 
 /* ── Main grid (2 columns) ────────────── */
 .wh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; align-items: start; }
 .wh-section { margin-bottom: 8px; }
+
+/* Flash highlight when a KPI / "My Approvals" focuses a section */
+.wh-flash { border-radius: 8px; animation: wh-flash-pulse 1.6s ease-out; }
+@keyframes wh-flash-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, .55); }
+    30%  { box-shadow: 0 0 0 5px rgba(239, 68, 68, .28); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
 
 /* ── Column header ────────────────────── */
 .wh-col-hdr {
@@ -578,6 +654,12 @@ function _inject_css() {
 .wh-date-lbl { font-size: 10px; color: var(--text-muted); }
 .wh-req  { font-size: 10px; font-weight: 600; color: #1d4ed8; }
 .wh-count { font-size: 10px; font-weight: 600; color: #6d28d9; }
+
+/* waiting-time badge (colour-coded by age) */
+.wh-days { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.wh-days-ok   { color: #059669; background: #ecfdf5; }
+.wh-days-warn { color: #d97706; background: #fef3c7; }
+.wh-days-crit { color: #dc2626; background: #fee2e2; }
 .wh-role { font-size: 10px; font-weight: 600; color: #5b21b6;
     background: #f5f3ff; padding: 1px 6px; border-radius: 3px; border: 1px solid #ede9fe; }
 
