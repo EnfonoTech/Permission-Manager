@@ -8,15 +8,7 @@ Returns data scoped to the current user's warehouse(s):
 """
 
 import frappe
-from frappe.utils import date_diff, getdate, today
-
-# Urgency ranking for sorting — lower rank = more urgent (shown first)
-_PRIORITY_RANK = {"Critical": 0, "Urgent": 1, "High": 2, "Medium": 3, "Low": 4}
-
-
-def _priority_rank(priority: str) -> int:
-    # Unknown / blank priority sorts after all known priorities
-    return _PRIORITY_RANK.get(priority, 99)
+from frappe.utils import today
 
 
 @frappe.whitelist()
@@ -83,12 +75,10 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
             "name", "transaction_date", "status",
             "set_from_warehouse", "set_warehouse", "owner", "custom_priority",
         ],
-        # Fetch oldest first so the limit keeps the items most in need of action
-        order_by="transaction_date asc",
+        order_by="transaction_date desc",
         limit=100,
     )
-    # Display urgent-first: highest priority, then oldest waiting
-    return _sort_by_urgency(_enrich_mrs(mrs))
+    return _enrich_mrs(mrs)
 
 
 def _get_my_mrs(user: str) -> list:
@@ -103,12 +93,12 @@ def _get_my_mrs(user: str) -> list:
         },
         fields=[
             "name", "transaction_date", "status",
-            "set_from_warehouse", "set_warehouse", "owner", "custom_priority",
+            "set_from_warehouse", "set_warehouse", "owner",
         ],
-        order_by="transaction_date asc",
+        order_by="transaction_date desc",
         limit=30,
     )
-    return _sort_by_urgency(_enrich_mrs(mrs))
+    return _enrich_mrs(mrs)
 
 
 def _enrich_mrs(mr_list: list) -> list:
@@ -144,24 +134,13 @@ def _enrich_mrs(mr_list: list) -> list:
         )
         name_map = {u.name: u.full_name or u.name.split("@")[0] for u in users}
 
-    _today = getdate(today())
     for mr in mr_list:
         c = count_map.get(mr.name, {})
         mr["item_count"]     = int(c.get("item_count") or 0)
         mr["total_qty"]      = float(c.get("total_qty") or 0)
         mr["requester_name"] = name_map.get(mr.owner, (mr.owner or "").split("@")[0])
-        # Days the request has been waiting (0 if dated today or in the future)
-        mr["days"] = max(0, date_diff(_today, mr.transaction_date)) if mr.transaction_date else 0
 
     return mr_list
-
-
-def _sort_by_urgency(mr_list: list) -> list:
-    """Order requests by priority (Critical first) then by oldest waiting."""
-    return sorted(
-        mr_list,
-        key=lambda mr: (_priority_rank(mr.get("custom_priority")), -(mr.get("days") or 0)),
-    )
 
 
 def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
@@ -281,7 +260,6 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
             se      = se_info.get(act.reference_name)
             from_wh = (se.from_warehouse if se else "") or ""
             to_wh   = (se.to_warehouse   if se else "") or ""
-            days    = max(0, date_diff(today(), getdate(act.creation))) if act.creation else 0
             result.append({
                 "name":              act.name,
                 "reference_doctype": act.reference_doctype,
@@ -289,12 +267,9 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
                 "workflow_state":    act.workflow_state,
                 "role_label":        role_label,
                 "creation":          str(act.creation),
-                "days":              days,
                 "from_warehouse":    from_wh,
                 "to_warehouse":      to_wh,
                 "warehouse":         to_wh or from_wh,  # for chip-level filtering
             })
 
-    # Oldest waiting first — the most overdue approvals rise to the top
-    result.sort(key=lambda a: -(a.get("days") or 0))
     return result
