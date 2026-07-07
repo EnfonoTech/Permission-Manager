@@ -313,20 +313,82 @@ function _open_comment_dialog(frm, transition) {
 
 function _apply_workflow_with_comment(frm, action, comment, priority) {
 	frappe.dom.freeze();
-	frappe
-		.xcall("permission_manager.permission_manager.workflow.apply_workflow", {
+	frappe.call({
+		method: "permission_manager.permission_manager.workflow.apply_workflow",
+		args: {
 			doc: frm.doc,
 			action: action,
-			comment: comment,
+			comment: comment || "",
 			priority: priority || "Medium",
-		})
-		.then((doc) => {
-			frappe.model.sync(doc);
+		},
+		callback(r) {
+			frappe.dom.unfreeze();
+			frm._pm_pending_action = null;
+			frm.set_intro("");
+			frappe.model.sync(r.message);
 			frm.refresh();
 			frappe.show_alert({
 				message: __("Workflow action applied: {0}", [action]),
 				indicator: "green",
 			});
-		})
-		.finally(() => frappe.dom.unfreeze());
+		},
+		error(xhr) {
+			frappe.dom.unfreeze();
+			if (_pm_is_attachment_error(xhr)) {
+				frm._pm_pending_action = { action, comment, priority };
+				_pm_hook_attachment_banner(frm);
+			}
+			// Always show the original server error message
+			frappe.request.report_error(xhr, {});
+		},
+	});
+}
+
+// Detect whether the server rejected with an attachment-mandatory error.
+function _pm_is_attachment_error(xhr) {
+	try {
+		const resp = JSON.parse(xhr.responseText || "{}");
+		const msgs = JSON.parse(resp._server_messages || "[]");
+		return msgs.some(function (m) {
+			const text = typeof m === "string" ? m : (m.message || "");
+			return text.toLowerCase().includes("attachment");
+		});
+	} catch (_) {
+		return false;
+	}
+}
+
+// Hook into the form's attachment upload event (once per form).
+// After the user uploads a file, show a persistent red banner with an
+// inline action button so the user can proceed without hunting the Actions menu.
+function _pm_hook_attachment_banner(frm) {
+	if (frm._pm_attach_hooked) return;
+	frm._pm_attach_hooked = true;
+
+	const _orig = frm.attachments.attachment_uploaded.bind(frm.attachments);
+	frm.attachments.attachment_uploaded = function (file_doc) {
+		_orig(file_doc);
+		if (frm._pm_pending_action) {
+			_pm_show_attachment_banner(frm, frm._pm_pending_action);
+		}
+	};
+}
+
+function _pm_show_attachment_banner(frm, pending) {
+	const label = __(pending.action);
+	frm.set_intro(
+		`<span style="color:#dc3545;font-weight:bold">⚠</span>&nbsp;&nbsp;` +
+		`${__("File attached.")} &nbsp;` +
+		`<button class="btn btn-xs btn-danger pm-wf-proceed-btn" style="margin-left:4px">` +
+		`${label} &rarr;</button>`,
+		"red"
+	);
+	// Bind after set_intro writes to the DOM
+	setTimeout(function () {
+		frm.$wrapper.find(".pm-wf-proceed-btn").off("click").on("click", function () {
+			frm._pm_pending_action = null;
+			frm.set_intro("");
+			_apply_workflow_with_comment(frm, pending.action, pending.comment, pending.priority);
+		});
+	}, 0);
 }

@@ -112,6 +112,7 @@ A more flexible alternative to Frappe's built-in workflow. Key additions:
 | Ad-hoc forward to any user mid-flow | ✗ | ✓ |
 | Conditional transitions (amount, field value) | ✗ | ✓ |
 | Require comment on a transition | ✗ | ✓ |
+| Require attachment on a transition | ✗ | ✓ |
 | Priority per approval step | ✗ | ✓ |
 | Return document for correction | ✗ | ✓ |
 | SLA reminders & escalation email | ✗ | ✓ |
@@ -218,6 +219,24 @@ frappe.session.user == "ceo@co.com"  # actor-specific gate
 
 **Require Comment** — tick on any transition (e.g. Reject) to force the approver to type a reason before proceeding.
 
+**Require Attachment** — tick on any transition where the user must upload at least one file before the action is allowed. The check is enforced by the PM Workflow engine itself — no Server Script needed.
+
+When blocked, a standard error dialog appears. After the user attaches a file, a red banner with an inline action button appears on the form:
+
+> ⚠ File attached.  **[Pending Approval →]**
+
+Clicking the button proceeds immediately — the user does not need to find the action in the Actions menu again. Not every transition needs this flag; only tick it where a supporting document is genuinely required.
+
+**Example — Purchase Invoice approval:**
+
+| From State | Action | Next State | Require Attachment |
+|---|---|---|---|
+| Draft | Pending Approval | Pending | ✔ |
+| Pending | Approve | Approved | — |
+| Pending | Reject | Rejected | — |
+
+Only the *Draft → Pending* step requires an attachment. Approve and Reject do not.
+
 **Priority per transition** — each transition row has a Priority field (Low / Medium / High / Critical, default Medium). When an approver takes an action, a dialog lets them confirm or change the priority for the next step. This priority is stamped on the PM Workflow Action record and shown as a badge in the inbox. If multiple transitions are active at the same step, the highest priority wins.
 
 **Return for Correction** — tick `Return for Correction` on any transition. When an approver uses it, a comment is mandatory, the document reverts to Draft so the submitter can edit it, and the submitter receives a notification.
@@ -260,16 +279,18 @@ frappe.session.user == "ceo@co.com"  # actor-specific gate
 
 #### PM Workflow — Transitions tab
 
-| # | From State | Action | Next State | Condition | Use Matrix | Level | Fallback Role | Require Comment |
-|---|---|---|---|---|---|---|---|---|
-| 1 | Draft | Submit for Approval | Pending L1 Approval | — | ☐ | — | — | ☐ |
-| 2 | Pending L1 Approval | Approve | Approved | `doc.grand_total <= 50000` | ✅ | 1 | Purchase Manager | ☐ |
-| 3 | Pending L1 Approval | Approve | Pending L2 Approval | `doc.grand_total > 50000` | ✅ | 1 | Purchase Manager | ☐ |
-| 4 | Pending L1 Approval | Reject | Rejected | — | ✅ | 1 | Purchase Manager | ✅ |
-| 5 | Pending L1 Approval | Return for Correction | Draft | — | ✅ | 1 | Purchase Manager | ✅ |
-| 6 | Pending L2 Approval | Approve | Approved | — | ✅ | 2 | Accounts Manager | ☐ |
-| 7 | Pending L2 Approval | Reject | Rejected | — | ✅ | 2 | Accounts Manager | ✅ |
+| # | From State | Action | Next State | Condition | Use Matrix | Level | Fallback Role | Require Comment | Require Attachment |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | Draft | Submit for Approval | Pending L1 Approval | — | ☐ | — | — | ☐ | ✅ |
+| 2 | Pending L1 Approval | Approve | Approved | `doc.grand_total <= 50000` | ✅ | 1 | Purchase Manager | ☐ | ☐ |
+| 3 | Pending L1 Approval | Approve | Pending L2 Approval | `doc.grand_total > 50000` | ✅ | 1 | Purchase Manager | ☐ | ☐ |
+| 4 | Pending L1 Approval | Reject | Rejected | — | ✅ | 1 | Purchase Manager | ✅ | ☐ |
+| 5 | Pending L1 Approval | Return for Correction | Draft | — | ✅ | 1 | Purchase Manager | ✅ | ☐ |
+| 6 | Pending L2 Approval | Approve | Approved | — | ✅ | 2 | Accounts Manager | ☐ | ☐ |
+| 7 | Pending L2 Approval | Reject | Rejected | — | ✅ | 2 | Accounts Manager | ✅ | ☐ |
 
+> Row 1 has **Require Attachment = ✅** — the submitter must upload a supporting document (e.g. vendor invoice scan) before the *Submit for Approval* action is allowed. Rows 2–7 do not require an attachment.
+>
 > Rows 2 and 3 have the same *From State* and *Action* but different conditions — PM Workflow evaluates both and fires whichever condition is true. If the amount is ≤ 50,000, row 2 fires (direct approval). If > 50,000, row 3 fires (escalates to L2).
 
 #### Employee Approval Chain setup (for the submitter, e.g. Ravi)

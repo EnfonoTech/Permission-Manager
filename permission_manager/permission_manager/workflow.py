@@ -472,6 +472,18 @@ def apply_workflow(doc, action: str, comment: str = None, priority: str = None):
     if is_return and not comment:
         frappe.throw(_("A comment is required when returning a document for correction."))
 
+    # Attachment check — configured per transition in the PM Workflow form
+    if transition.get("require_attachment"):
+        has_file = frappe.db.exists("File", {
+            "attached_to_doctype": doc.doctype,
+            "attached_to_name": doc.name,
+        })
+        if not has_file:
+            frappe.throw(
+                _("An attachment is mandatory before performing '{0}'. Please attach a supporting document and try again.").format(action),
+                title=_("Attachment Required"),
+            )
+
     doc.set(workflow.workflow_state_field, transition.next_state)
 
     next_state = next((s for s in workflow.states if s.state == transition.next_state), None)
