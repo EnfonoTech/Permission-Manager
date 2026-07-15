@@ -22,11 +22,11 @@ def get_warehouse_dashboard_data() -> dict:
         pluck="for_value",
     )
 
-    is_manager = bool(roles & {"Stock Manager", "System Manager"})
+    is_manager = "System Manager" in roles
 
-    mr_to_fulfill     = _get_mr_to_fulfill(warehouses)
-    my_mrs            = _get_my_mrs(user)
-    pending_approvals = _get_pending_approvals(user, roles, warehouses)
+    mr_to_fulfill     = _get_mr_to_fulfill(warehouses, is_manager)
+    my_mrs            = _get_my_mrs(user, is_manager)
+    pending_approvals = _get_pending_approvals(user, roles, warehouses, is_manager)
 
     transferred_today = frappe.db.count(
         "Stock Entry",
@@ -55,22 +55,25 @@ def get_warehouse_dashboard_data() -> dict:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _get_mr_to_fulfill(warehouses: list) -> list:
+def _get_mr_to_fulfill(warehouses: list, is_manager: bool = False) -> list:
     """
     Submitted Material Requests of type Material Transfer where the SOURCE
-    warehouse belongs to this user.
+    warehouse belongs to this user. Managers/admins see ALL source warehouses.
     """
-    if not warehouses:
+    if not is_manager and not warehouses:
         return []
+
+    filters = {
+        "docstatus": 1,
+        "material_request_type": "Material Transfer",
+        "status": ["not in", ["Stopped", "Cancelled", "Ordered", "Transferred"]],
+    }
+    if not is_manager:
+        filters["set_from_warehouse"] = ["in", warehouses]
 
     mrs = frappe.get_all(
         "Material Request",
-        filters={
-            "docstatus": 1,
-            "material_request_type": "Material Transfer",
-            "set_from_warehouse": ["in", warehouses],
-            "status": ["not in", ["Stopped", "Cancelled", "Ordered", "Transferred"]],
-        },
+        filters=filters,
         fields=[
             "name", "transaction_date", "status",
             "set_from_warehouse", "set_warehouse", "owner", "custom_priority",
@@ -81,22 +84,26 @@ def _get_mr_to_fulfill(warehouses: list) -> list:
     return _enrich_mrs(mrs)
 
 
-def _get_my_mrs(user: str) -> list:
-    """Material Requests created by this user that are pending or in-progress."""
+def _get_my_mrs(user: str, is_manager: bool = False) -> list:
+    """Material Requests created by this user that are pending or in-progress.
+    Managers/admins see ALL open Material Transfer requests."""
+    filters = {
+        "docstatus": ["in", [0, 1]],   # include drafts pending workflow approval
+        "material_request_type": "Material Transfer",
+        "status": ["not in", ["Cancelled", "Stopped", "Transferred"]],
+    }
+    if not is_manager:
+        filters["owner"] = user
+
     mrs = frappe.get_all(
         "Material Request",
-        filters={
-            "docstatus": ["in", [0, 1]],   # include drafts pending workflow approval
-            "owner": user,
-            "material_request_type": "Material Transfer",
-            "status": ["not in", ["Cancelled", "Stopped", "Transferred"]],
-        },
+        filters=filters,
         fields=[
             "name", "transaction_date", "status",
             "set_from_warehouse", "set_warehouse", "owner",
         ],
         order_by="transaction_date desc",
-        limit=30,
+        limit=100,
     )
     return _enrich_mrs(mrs)
 
@@ -143,7 +150,7 @@ def _enrich_mrs(mr_list: list) -> list:
     return mr_list
 
 
-def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
+def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: bool = False) -> list:
     """
     Open PM Workflow Actions for Stock Entry Material Transfer scoped to the
     user's default warehouse(s) as the destination.
@@ -201,7 +208,8 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list) -> list:
                 seen_parents.add(row.parent)
 
     # Keep only SEs whose destination is in the user's default warehouses
-    if warehouses:
+    # (managers/admins see all destinations)
+    if warehouses and not is_manager:
         wh_set = set(warehouses)
         in_scope = {
             name for name, se in se_info.items()
