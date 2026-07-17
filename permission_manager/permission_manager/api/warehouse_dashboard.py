@@ -307,32 +307,6 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
                 "available_actions": [],                # filled below
             })
 
-    # ── Collapse duplicates: multiple pending Stock Entries raised from the
-    # SAME Material Request should surface as ONE approval (keep the most
-    # recently-created Stock Entry). Entries not tied to an MR are untouched.
-    if result:
-        se_names = [r["reference_name"] for r in result]
-        mr_rows = frappe.get_all(
-            "Stock Entry Detail",
-            filters={"parent": ["in", se_names], "material_request": ["is", "set"]},
-            fields=["parent", "material_request"],
-        )
-        se_to_mr: dict = {}
-        for row in mr_rows:
-            se_to_mr.setdefault(row.parent, row.material_request)
-
-        result.sort(key=lambda r: r.get("creation") or "", reverse=True)  # latest first
-        seen_mr: set = set()
-        deduped = []
-        for r in result:
-            mr = se_to_mr.get(r["reference_name"])
-            if mr:
-                if mr in seen_mr:
-                    continue
-                seen_mr.add(mr)
-            deduped.append(r)
-        result = deduped
-
     # Attach the exact workflow actions the current user may apply inline
     # (e.g. Accept / Reject). Uses the SAME resolver as apply_workflow
     # (get_transitions → matrix + self-approval + condition checks) so the
@@ -363,7 +337,58 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
             frappe.clear_last_message()
             r["available_actions"] = []
 
+    # Keep only rows the current user can actually DECIDE on — an approve or
+    # reject action must be available. This drops submitter-only states such as
+    # a Draft whose only action is "Send for Acceptance" (that belongs to the
+    # creator, not the approver's Pending Approvals queue).
+    result = [
+        r for r in result
+        if any(_action_kind(a.get("action")) in ("approve", "reject")
+               for a in (r.get("available_actions") or []))
+    ]
+
+    # Duplicate guard: if a single Material Request produced 2+ pending Stock
+    # Entries, hide ALL of them from Pending Approvals — a duplicate transfer
+    # must be sorted out first; the approver should not rubber-stamp one of them.
+    if result:
+        se_names = [r["reference_name"] for r in result]
+        mr_rows = frappe.get_all(
+            "Stock Entry Detail",
+            filters={"parent": ["in", se_names], "material_request": ["is", "set"]},
+            fields=["parent", "material_request"],
+        )
+        se_to_mr: dict = {}
+        for row in mr_rows:
+            se_to_mr.setdefault(row.parent, row.material_request)
+
+        from collections import Counter
+        mr_count = Counter(
+            se_to_mr[r["reference_name"]]
+            for r in result if se_to_mr.get(r["reference_name"])
+        )
+        result = [
+            r for r in result
+            if not (se_to_mr.get(r["reference_name"])
+                    and mr_count[se_to_mr[r["reference_name"]]] >= 2)
+        ]
+
     return result
+
+
+def _action_kind(label: str) -> str:
+    """Classify a workflow action label → approve / reject / other.
+
+    NB: check 'send' first — "Send for Acceptance" contains the substring
+    'accept' and must NOT be treated as an approve action.
+    """
+    al = (label or "").lower()
+    if "send" in al:                       # e.g. "Send for Acceptance" (submitter action)
+        return "other"
+    if any(k in al for k in ("reject", "decline", "cancel")):
+        return "reject"
+    if any(k in al for k in ("accept", "approve", "authoriz")):
+        return "approve"
+    return "other"
 
 
 @frappe.whitelist()

@@ -405,16 +405,20 @@ function _approval_row(ap) {
         : "";
 
     // Classify an action label → approve / reject / other
+    // NB: check "send" first — "Send for Acceptance" contains "accept".
     var _ap_kind = function (label) {
         var al = (label || "").toLowerCase();
-        if (al.indexOf("accept") > -1 || al.indexOf("approve") > -1 || al.indexOf("authoriz") > -1) return "approve";
+        if (al.indexOf("send") > -1) return "other";
         if (al.indexOf("reject") > -1 || al.indexOf("decline") > -1 || al.indexOf("cancel") > -1) return "reject";
+        if (al.indexOf("accept") > -1 || al.indexOf("approve") > -1 || al.indexOf("authoriz") > -1) return "approve";
         return "other";
     };
     var _ap_rank = { approve: 0, other: 1, reject: 2 };
 
-    // Inline action buttons — always render Accept/approve first, Reject last
+    // Inline action buttons — only approve/reject decisions (never submitter
+    // actions like "Send for Acceptance"), Accept first and Reject last.
     var btns = (ap.available_actions || []).slice()
+        .filter(function (a) { var k = _ap_kind(a.action); return k === "approve" || k === "reject"; })
         .sort(function (a, b) { return _ap_rank[_ap_kind(a.action)] - _ap_rank[_ap_kind(b.action)]; })
         .map(function (a) {
         var label = a.action || "";
