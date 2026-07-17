@@ -347,9 +347,11 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
                for a in (r.get("available_actions") or []))
     ]
 
-    # Duplicate guard: if a single Material Request produced 2+ pending Stock
-    # Entries, hide ALL of them from Pending Approvals — a duplicate transfer
-    # must be sorted out first; the approver should not rubber-stamp one of them.
+    # Over-fulfilment (duplicate) guard: hide an MR's pending approvals ONLY when
+    # the TOTAL transferred qty across its non-cancelled Stock Entries EXCEEDS the
+    # requested qty — i.e. a genuine duplicate transfer was raised. Splitting one
+    # MR across several Stock Entries that together stay within the requested qty
+    # is legitimate partial fulfilment and must remain visible for approval.
     if result:
         se_names = [r["reference_name"] for r in result]
         mr_rows = frappe.get_all(
@@ -361,16 +363,36 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
         for row in mr_rows:
             se_to_mr.setdefault(row.parent, row.material_request)
 
-        from collections import Counter
-        mr_count = Counter(
-            se_to_mr[r["reference_name"]]
-            for r in result if se_to_mr.get(r["reference_name"])
-        )
-        result = [
-            r for r in result
-            if not (se_to_mr.get(r["reference_name"])
-                    and mr_count[se_to_mr[r["reference_name"]]] >= 2)
-        ]
+        mrs = list({m for m in se_to_mr.values() if m})
+        over_fulfilled: set = set()
+        if mrs:
+            # Per MR line: sum(transfer_qty) of all non-cancelled SE rows vs the
+            # requested stock_qty. If any line is exceeded, the MR is a duplicate.
+            rows = frappe.db.sql(
+                """
+                SELECT mri.parent AS mr
+                FROM `tabMaterial Request Item` mri
+                JOIN (
+                    SELECT material_request_item, SUM(transfer_qty) AS moved
+                    FROM `tabStock Entry Detail`
+                    WHERE docstatus < 2
+                      AND material_request_item IS NOT NULL
+                      AND material_request_item != ''
+                    GROUP BY material_request_item
+                ) sed ON sed.material_request_item = mri.name
+                WHERE mri.parent IN %(mrs)s
+                  AND sed.moved > mri.stock_qty + 0.001
+                """,
+                {"mrs": mrs},
+                as_dict=True,
+            )
+            over_fulfilled = {r.mr for r in rows}
+
+        if over_fulfilled:
+            result = [
+                r for r in result
+                if se_to_mr.get(r["reference_name"]) not in over_fulfilled
+            ]
 
     return result
 
