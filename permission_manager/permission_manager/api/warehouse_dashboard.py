@@ -307,6 +307,32 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
                 "available_actions": [],                # filled below
             })
 
+    # ── Collapse duplicates: multiple pending Stock Entries raised from the
+    # SAME Material Request should surface as ONE approval (keep the most
+    # recently-created Stock Entry). Entries not tied to an MR are untouched.
+    if result:
+        se_names = [r["reference_name"] for r in result]
+        mr_rows = frappe.get_all(
+            "Stock Entry Detail",
+            filters={"parent": ["in", se_names], "material_request": ["is", "set"]},
+            fields=["parent", "material_request"],
+        )
+        se_to_mr: dict = {}
+        for row in mr_rows:
+            se_to_mr.setdefault(row.parent, row.material_request)
+
+        result.sort(key=lambda r: r.get("creation") or "", reverse=True)  # latest first
+        seen_mr: set = set()
+        deduped = []
+        for r in result:
+            mr = se_to_mr.get(r["reference_name"])
+            if mr:
+                if mr in seen_mr:
+                    continue
+                seen_mr.add(mr)
+            deduped.append(r)
+        result = deduped
+
     # Attach the exact workflow actions the current user may apply inline
     # (e.g. Accept / Reject). Uses the SAME resolver as apply_workflow
     # (get_transitions → matrix + self-approval + condition checks) so the

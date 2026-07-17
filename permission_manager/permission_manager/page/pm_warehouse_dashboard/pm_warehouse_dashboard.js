@@ -404,13 +404,21 @@ function _approval_row(ap) {
             + "</div>"
         : "";
 
-    // Inline action buttons from the workflow transitions this user may apply
-    var btns = (ap.available_actions || []).map(function (a) {
+    // Classify an action label → approve / reject / other
+    var _ap_kind = function (label) {
+        var al = (label || "").toLowerCase();
+        if (al.indexOf("accept") > -1 || al.indexOf("approve") > -1 || al.indexOf("authoriz") > -1) return "approve";
+        if (al.indexOf("reject") > -1 || al.indexOf("decline") > -1 || al.indexOf("cancel") > -1) return "reject";
+        return "other";
+    };
+    var _ap_rank = { approve: 0, other: 1, reject: 2 };
+
+    // Inline action buttons — always render Accept/approve first, Reject last
+    var btns = (ap.available_actions || []).slice()
+        .sort(function (a, b) { return _ap_rank[_ap_kind(a.action)] - _ap_rank[_ap_kind(b.action)]; })
+        .map(function (a) {
         var label = a.action || "";
-        var al    = label.toLowerCase();
-        var kind  = (al.indexOf("reject") > -1 || al.indexOf("decline") > -1 || al.indexOf("cancel") > -1) ? "reject"
-                  : (al.indexOf("accept") > -1 || al.indexOf("approve") > -1 || al.indexOf("authoriz") > -1) ? "approve"
-                  : "other";
+        var kind  = _ap_kind(label);
         return '<button class="wh-ap-btn wh-ap-' + kind + '" data-ap-action="' + e(label) + '"'
             + ' data-req-comment="' + (a.requires_comment ? 1 : 0) + '"'
             + ' data-req-attach="' + (a.requires_attachment ? 1 : 0) + '"'
