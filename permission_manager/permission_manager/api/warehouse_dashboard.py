@@ -8,7 +8,8 @@ Returns data scoped to the current user's warehouse(s):
 """
 
 import frappe
-from frappe.utils import today
+from frappe import _
+from frappe.utils import today, flt
 
 
 @frappe.whitelist()
@@ -81,7 +82,32 @@ def _get_mr_to_fulfill(warehouses: list, is_manager: bool = False) -> list:
         order_by="transaction_date desc",
         limit=100,
     )
-    return _enrich_mrs(mrs)
+    return _enrich_mrs(_drop_already_fulfilling(mrs))
+
+
+def _drop_already_fulfilling(mrs: list) -> list:
+    """
+    Remove Material Requests that already have an in-progress or submitted
+    Material Transfer Stock Entry linked to them, so the same MR is not shown
+    for fulfilment twice (which led users to create duplicate Stock Entries).
+
+    A Stock Entry Detail row carries `material_request` when the transfer was
+    made against an MR, and its docstatus mirrors the parent Stock Entry:
+        docstatus 0 = Draft / pending workflow approval  → block (in progress)
+        docstatus 1 = Submitted                          → block (done)
+        docstatus 2 = Cancelled                          → do NOT block (MR reappears)
+    """
+    if not mrs:
+        return mrs
+
+    names = [mr.name for mr in mrs]
+    busy = frappe.get_all(
+        "Stock Entry Detail",
+        filters={"material_request": ["in", names], "docstatus": ["<", 2]},
+        pluck="material_request",
+    )
+    busy_set = set(busy)
+    return [mr for mr in mrs if mr.name not in busy_set]
 
 
 def _get_my_mrs(user: str, is_manager: bool = False) -> list:
@@ -278,6 +304,73 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
                 "from_warehouse":    from_wh,
                 "to_warehouse":      to_wh,
                 "warehouse":         to_wh or from_wh,  # for chip-level filtering
+                "available_actions": [],                # filled below
             })
 
+    # Attach the exact workflow actions the current user may apply inline
+    # (e.g. Accept / Reject). Uses the SAME resolver as apply_workflow
+    # (get_transitions → matrix + self-approval + condition checks) so the
+    # buttons rendered always match what the transition will actually accept —
+    # never offer an action that would fail with "Invalid Workflow Action".
+    try:
+        from permission_manager.permission_manager.workflow import get_transitions
+    except Exception:
+        get_transitions = None
+
+    for r in result:
+        if not get_transitions:
+            break
+        try:
+            trans = get_transitions(
+                {"doctype": r["reference_doctype"], "name": r["reference_name"]}
+            )
+            r["available_actions"] = [
+                {
+                    "action":              t.get("action"),
+                    "requires_comment":    bool(t.get("is_return_for_correction")),
+                    "requires_attachment": bool(t.get("require_attachment")),
+                }
+                for t in trans
+                if t.get("action")
+            ]
+        except Exception:
+            frappe.clear_last_message()
+            r["available_actions"] = []
+
     return result
+
+
+@frappe.whitelist()
+def get_stock_entry_preview(stock_entry: str) -> dict:
+    """
+    Lightweight Stock Entry preview for the dashboard's inline approval view —
+    header + item lines — so an approver can review without opening the form.
+    """
+    if not frappe.has_permission("Stock Entry", "read", doc=stock_entry):
+        frappe.throw(_("Not permitted to read this Stock Entry"), frappe.PermissionError)
+
+    se = frappe.get_doc("Stock Entry", stock_entry)
+    items = [
+        {
+            "item_code":   i.item_code,
+            "item_name":   i.item_name,
+            "qty":         flt(i.qty),
+            "uom":         i.uom,
+            "s_warehouse": i.s_warehouse,
+            "t_warehouse": i.t_warehouse,
+        }
+        for i in se.items
+    ]
+    return {
+        "name":           se.name,
+        "workflow_state": se.get("workflow_state") or "",
+        "purpose":        se.purpose,
+        "posting_date":   str(se.posting_date or ""),
+        "from_warehouse": se.get("from_warehouse") or "",
+        "to_warehouse":   se.get("to_warehouse") or "",
+        "total_qty":      sum(flt(i.qty) for i in se.items),
+        "item_count":     len(items),
+        "remarks":        se.get("remarks") or "",
+        "owner":          se.owner,
+        "items":          items,
+    }

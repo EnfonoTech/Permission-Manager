@@ -21,9 +21,6 @@ frappe.pages["pm-warehouse-dashboard"].on_page_load = function (wrapper) {
         _active_wh = _fulfill_wh_filter = _fulfill_pri_filter = null;
         _load(page);
     });
-    page.add_inner_button(__("My Approvals"), function () {
-        frappe.set_route("pm-approval-inbox");
-    });
     page.add_inner_button(__("New Material Request"), function () {
         frappe.new_doc("Material Request", { material_request_type: "Material Transfer" });
     });
@@ -101,6 +98,72 @@ function _setup_events(page) {
     page.main.on("click", ".wh-row[data-doctype][data-name]", function (e) {
         if ($(e.target).closest("a.wh-doc-link").length) return; // let the link handle it
         frappe.set_route("Form", $(this).data("doctype"), $(this).data("name"));
+    });
+
+    // Approval: toggle inline Stock Entry preview (lazy-loaded)
+    page.main.on("click", ".wh-ap-preview-btn", function (e) {
+        e.stopPropagation();
+        var se = $(this).data("se");
+        var $box = page.main.find(".wh-ap-preview").filter(function () { return $(this).data("se") === se; });
+        if (!$box.length) return;
+        if ($box.is(":visible")) { $box.slideUp(120); return; }
+        if ($box.data("loaded")) { $box.slideDown(120); return; }
+        $box.html('<div class="wh-ap-pv-loading">' + __("Loading…") + "</div>").slideDown(120);
+        frappe.call({
+            method: "permission_manager.permission_manager.api.warehouse_dashboard.get_stock_entry_preview",
+            args: { stock_entry: se },
+            callback: function (r) {
+                if (r.message) { $box.html(_preview_html(r.message)).data("loaded", true); }
+                else { $box.html('<div class="wh-ap-pv-loading">' + __("No data") + "</div>"); }
+            },
+            error: function () { $box.html('<div class="wh-ap-pv-loading">' + __("Failed to load preview") + "</div>"); },
+        });
+    });
+
+    // Approval: apply a workflow action (Accept / Reject …) inline
+    page.main.on("click", ".wh-ap-btn[data-ap-action]", function (e) {
+        e.stopPropagation();
+        var $b       = $(this);
+        var action   = $b.data("ap-action");
+        var doctype  = $b.data("doctype");
+        var docname  = $b.data("name");
+        var reqCmt   = String($b.data("req-comment")) === "1";
+        var reqAttach = String($b.data("req-attach")) === "1";
+
+        // Attachment-gated transitions can't be satisfied from the dashboard.
+        if (reqAttach) {
+            frappe.msgprint({
+                title: __("Attachment Required"),
+                message: __("This action needs a supporting attachment. Open {0} to attach a file, then act.", [docname]),
+                indicator: "orange",
+            });
+            return;
+        }
+
+        function _apply(comment) {
+            $b.prop("disabled", true).css("opacity", 0.6);
+            frappe.call({
+                method: "permission_manager.permission_manager.api.approvals.quick_apply_workflow_action",
+                args: { doctype: doctype, docname: docname, action: action, comment: comment || "" },
+                callback: function () {
+                    frappe.show_alert({ message: __("{0} applied to {1}", [__(action), docname]), indicator: "green" });
+                    _load(page);
+                },
+                error: function () { $b.prop("disabled", false).css("opacity", 1); _load(page); },
+            });
+        }
+
+        if (reqCmt) {
+            // Return-for-correction style transitions require a reason.
+            frappe.prompt(
+                [{ fieldname: "comment", fieldtype: "Small Text", label: __("Reason"), reqd: 1 }],
+                function (values) { _apply(values.comment); },
+                __("{0} — {1}", [__(action), docname]),
+                __(action)
+            );
+        } else {
+            frappe.confirm(__("{0} — {1}?", [__(action), docname]), function () { _apply(); });
+        }
     });
 }
 
@@ -341,7 +404,27 @@ function _approval_row(ap) {
             + "</div>"
         : "";
 
-    return '<div class="wh-row" data-doctype="' + e(ap.reference_doctype) + '" data-name="' + e(ap.reference_name) + '">'
+    // Inline action buttons from the workflow transitions this user may apply
+    var btns = (ap.available_actions || []).map(function (a) {
+        var label = a.action || "";
+        var al    = label.toLowerCase();
+        var kind  = (al.indexOf("reject") > -1 || al.indexOf("decline") > -1 || al.indexOf("cancel") > -1) ? "reject"
+                  : (al.indexOf("accept") > -1 || al.indexOf("approve") > -1 || al.indexOf("authoriz") > -1) ? "approve"
+                  : "other";
+        return '<button class="wh-ap-btn wh-ap-' + kind + '" data-ap-action="' + e(label) + '"'
+            + ' data-req-comment="' + (a.requires_comment ? 1 : 0) + '"'
+            + ' data-req-attach="' + (a.requires_attachment ? 1 : 0) + '"'
+            + ' data-doctype="' + e(ap.reference_doctype) + '" data-name="' + e(ap.reference_name) + '">'
+            + e(__(label)) + "</button>";
+    }).join("");
+
+    var actions_html = btns
+        + '<button class="wh-ap-btn wh-ap-ghost wh-ap-preview-btn" data-se="' + e(ap.reference_name) + '">'
+        + __("Preview") + "</button>"
+        + '<a class="wh-ap-btn wh-ap-ghost wh-doc-link" href="' + _doc_link(ap.reference_doctype, ap.reference_name) + '">'
+        + __("Open") + "</a>";
+
+    return '<div class="wh-row wh-ap-row" data-se="' + e(ap.reference_name) + '">'
         + '<div class="wh-row-name">'
         + '<a class="wh-doc-link" href="' + _doc_link(ap.reference_doctype, ap.reference_name) + '">' + e(ap.reference_name) + "</a>"
         + '<span class="wh-state-pill">' + e(ap.workflow_state || "") + "</span>"
@@ -351,6 +434,32 @@ function _approval_row(ap) {
         + '<span class="wh-date-lbl">' + frappe.datetime.str_to_user(date_str) + "</span>"
         + '<span class="wh-role">' + e(ap.role_label || "") + "</span>"
         + "</div>"
+        + '<div class="wh-ap-actions">' + actions_html + "</div>"
+        + '<div class="wh-ap-preview" data-se="' + e(ap.reference_name) + '" style="display:none"></div>'
+        + "</div>";
+}
+
+function _preview_html(se) {
+    var e = frappe.utils.escape_html;
+    var rows = (se.items || []).map(function (it) {
+        var iname = (it.item_name && it.item_name !== it.item_code)
+            ? '<div class="wh-ap-iname">' + e(it.item_name) + "</div>" : "";
+        return "<tr>"
+            + "<td>" + e(it.item_code || "") + iname + "</td>"
+            + '<td class="wh-ap-num">' + _fmt_qty(it.qty) + " " + e(it.uom || "") + "</td>"
+            + "<td>" + e(it.s_warehouse || "—") + "</td>"
+            + "<td>" + e(it.t_warehouse || "—") + "</td>"
+            + "</tr>";
+    }).join("");
+    return '<div class="wh-ap-pv">'
+        + '<div class="wh-ap-pv-hdr"><span>' + e(se.name) + "</span>"
+        + '<span class="wh-ap-pv-meta">' + e(se.item_count) + " " + __("items")
+        + " · " + _fmt_qty(se.total_qty) + " " + __("qty") + "</span></div>"
+        + '<table class="wh-ap-tbl"><thead><tr>'
+        + "<th>" + __("Item") + '</th><th class="wh-ap-num">' + __("Qty")
+        + "</th><th>" + __("Source") + "</th><th>" + __("Target") + "</th>"
+        + "</tr></thead><tbody>" + rows + "</tbody></table>"
+        + (se.remarks ? '<div class="wh-ap-remarks">' + e(se.remarks) + "</div>" : "")
         + "</div>";
 }
 
@@ -600,6 +709,39 @@ function _inject_css() {
     border: 1px solid var(--border-color); border-top: none;
     border-radius: 0 0 8px 8px; }
 .wh-empty-full { border-radius: 0 0 8px 8px; border-top: none; }
+
+/* ── Inline approval actions + preview ── */
+.wh-ap-row { cursor: default; grid-template-rows: auto auto auto auto; }
+.wh-ap-actions { grid-column: 1 / 3; grid-row: 3; display: flex; flex-wrap: wrap;
+    gap: 6px; margin-top: 5px; }
+.wh-ap-btn { font-size: 11px; font-weight: 700; padding: 3px 12px; border-radius: 6px;
+    border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);
+    cursor: pointer; text-decoration: none; line-height: 1.7; transition: filter .12s, background .12s; }
+.wh-ap-btn:hover { filter: brightness(.97); }
+.wh-ap-approve { background: #059669; color: #fff; border-color: #059669; }
+.wh-ap-approve:hover { background: #047857; }
+.wh-ap-reject { background: #fff; color: #dc2626; border-color: #fca5a5; }
+.wh-ap-reject:hover { background: #fee2e2; }
+.wh-ap-other { background: #2563eb; color: #fff; border-color: #2563eb; }
+.wh-ap-ghost { background: transparent; color: var(--text-muted); }
+.wh-ap-ghost:hover { color: var(--primary); border-color: var(--primary); }
+.wh-ap-preview { grid-column: 1 / 3; grid-row: 4; }
+.wh-ap-pv-loading { padding: 10px; font-size: 12px; color: var(--text-muted); text-align: center; }
+.wh-ap-pv { border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden;
+    margin-top: 6px; background: var(--bg-color); }
+.wh-ap-pv-hdr { display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; font-size: 11px; font-weight: 700; background: var(--control-bg);
+    border-bottom: 1px solid var(--border-color); }
+.wh-ap-pv-meta { font-weight: 600; color: var(--text-muted); }
+.wh-ap-tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
+.wh-ap-tbl th { text-align: left; padding: 5px 10px; font-size: 9px; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--text-muted); border-bottom: 1px solid var(--border-color); }
+.wh-ap-tbl td { padding: 5px 10px; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+.wh-ap-tbl tr:last-child td { border-bottom: 0; }
+.wh-ap-num { text-align: right; white-space: nowrap; }
+.wh-ap-iname { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+.wh-ap-remarks { padding: 6px 10px; font-size: 11px; color: var(--text-muted);
+    border-top: 1px solid var(--border-color); }
 
 /* ── Responsive ───────────────────────── */
 @media (max-width: 900px) {
