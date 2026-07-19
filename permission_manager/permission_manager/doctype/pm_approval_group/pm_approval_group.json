@@ -1,0 +1,101 @@
+{
+ "actions": [],
+ "autoname": "field:group_name",
+ "creation": "2026-07-19 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "group_name",
+  "company",
+  "disabled",
+  "cb1",
+  "description",
+  "sb_stages",
+  "stages",
+  "sb_je",
+  "journal_templates"
+ ],
+ "fields": [
+  {
+   "fieldname": "group_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Group Name",
+   "reqd": 1,
+   "unique": 1,
+   "description": "Must match the Account's Approval Group value (e.g. Vehicle, Payroll)."
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "description": "Leave blank to apply to all companies."
+  },
+  {
+   "default": "0",
+   "fieldname": "disabled",
+   "fieldtype": "Check",
+   "label": "Disabled"
+  },
+  {
+   "fieldname": "cb1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "sb_stages",
+   "fieldtype": "Section Break",
+   "label": "Approval Chain (in order)"
+  },
+  {
+   "fieldname": "stages",
+   "fieldtype": "Table",
+   "label": "Stages",
+   "options": "PM Approval Group Stage",
+   "reqd": 1,
+   "description": "Ordered approver roles. Each row is one approval level; the last level is the final approver."
+  },
+  {
+   "fieldname": "sb_je",
+   "fieldtype": "Section Break",
+   "label": "Journal Entry"
+  },
+  {
+   "fieldname": "journal_templates",
+   "fieldtype": "Small Text",
+   "label": "Journal Entry Templates",
+   "description": "Optional. Journal Entry Template names (one per line) that should follow this chain."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-07-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Approval Group",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

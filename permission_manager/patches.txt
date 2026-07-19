@@ -4,3 +4,4 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+permission_manager.permission_manager.patches.seed_default_approval_groups
