@@ -52,9 +52,10 @@
   <a href="#je">5. Journal Entry routing</a>
   <a href="#popr">6. PO &amp; Purchase Receipt</a>
   <a href="#actions">7. Approve / reject / rules</a>
-  <a href="#people">8. Change who approves</a>
-  <a href="#newco">9. New company setup</a>
-  <a href="#ref">10. Reference tables</a>
+  <a href="#chain">8. Change a chain (config)</a>
+  <a href="#people">9. Change who approves</a>
+  <a href="#newco">10. New company setup</a>
+  <a href="#ref">11. Reference tables</a>
 </nav>
 
 <main>
@@ -137,8 +138,17 @@
   <div class="note"><b>Built-in guards:</b> a user cannot approve a document they created (<i>no self-approval</i>); a user without the routed role never sees Approve; attachments are enforced where required (Purchase Receipt, templated JVs).</div>
 </section>
 
+<section id="chain">
+  <h2>8. Changing an approval chain (no code)</h2>
+  <p>Each account group's chain is a record in <b>PM Approval Group</b> — editable in the desk. The <b>Group Name</b> matches the account tag; the <b>Stages</b> table is the ordered list of approver roles.</p>
+  <div class="step"><div class="num">1</div><div>Open <b>PM Approval Group</b> (e.g. <i>Vehicle</i>).</div></div>
+  <div class="step"><div class="num">2</div><div>Edit the <b>Stages</b> — reorder, add or remove approver roles (e.g. change stage 1 from <i>Vehicle Dept Head</i> to <i>Operations</i>, or insert an extra level). Optionally set a Journal Entry Template list so the same chain applies to those JVs.</div></div>
+  <div class="step"><div class="num">3</div><div><b>Save</b> — the Purchase Invoice &amp; Journal Entry workflows regenerate automatically from the config. No transition editing, no code.</div></div>
+  <div class="note">Group tag (on the Account) → <b>PM Approval Group</b> (the chain) → generated workflow. Change the chain by editing data; change the <i>person</i> by reassigning a Role Profile (below).</div>
+</section>
+
 <section id="people">
-  <h2>8. Changing who approves</h2>
+  <h2>9. Changing who approves (the person)</h2>
   <p>Approvers are roles, so you never edit the workflow to change a person:</p>
   <div class="step"><div class="num">1</div><div>Open the <b>User</b> and set their <b>Role Profile</b> to the position (e.g. <i>Vehicle Dept Head</i>).</div></div>
   <div class="step"><div class="num">2</div><div>To move the role to someone else, reassign that Role Profile. Approvals in flight instantly recognise the new holder.</div></div>
@@ -146,7 +156,7 @@
 </section>
 
 <section id="newco">
-  <h2>9. Setting this up for a new company</h2>
+  <h2>10. Setting this up for a new company</h2>
   <div class="step"><div class="num">1</div><div>Install the app (<code>bench migrate</code>) — it creates the <b>Approval Group</b> field on Account and Purchase Invoice, and activates routing.</div></div>
   <div class="step"><div class="num">2</div><div><b>Tag the company's expense accounts</b> with their Approval Group (or tag parent accounts). No numbers, no code.</div></div>
   <div class="step"><div class="num">3</div><div>Create the position <b>Role Profiles</b> and assign users.</div></div>
@@ -154,7 +164,7 @@
 </section>
 
 <section id="ref">
-  <h2>10. Reference — group &rarr; approver</h2>
+  <h2>11. Reference — group &rarr; approver</h2>
   <table>
     <tr><th>Approval Group</th><th>Service PI</th><th>Journal (template)</th></tr>
     <tr><td>Vehicle</td><td>Vehicle Dept Head &rarr; Accountant</td><td>Fuel / Vehicle JV &rarr; Vehicle Dept Head &rarr; Accountant</td></tr>
