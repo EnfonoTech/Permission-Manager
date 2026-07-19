@@ -346,6 +346,7 @@ def _apply_restrict_override(user_doc, safe: str, items: list) -> tuple:
     """
     base_r = f"{_PM_BASE_PREFIX}{safe}"
     base_roles = {"All", "Guest"}
+    base_set = base_roles  # alias used below when filtering original roles
 
     # ── Build effective permission snapshot for this user ──────────────────────
     individual = {r.role for r in user_doc.roles if r.role not in base_roles}
