@@ -65,6 +65,8 @@ fixtures = [
                     "Employee-pm_approval_section",
                     "Employee-pm_approval_chain",
                     "Employee-pm_leave_substitute",
+                    "Account-custom_approval_group",
+                    "Purchase Invoice-custom_approval_group",
                 ],
             ]
         ],
@@ -101,6 +103,11 @@ doc_events = {
     "Expense Claim": {
         "before_save":   "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_submit",
+    },
+    # Account-driven approval routing: stamp custom_approval_group from the line's
+    # expense account (tag accounts, not numbers). Read by PM Workflow conditions.
+    "Purchase Invoice": {
+        "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_purchase_invoice",
     },
     # PM Workflow engine — fires on every doctype
     "*": {
