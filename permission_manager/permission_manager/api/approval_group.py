@@ -13,7 +13,7 @@ Routing summary:
   * Purchase Invoice — by account group (service), currency (local/import), or Asset item.
   * Purchase Order   — Branch Head, or the Asset chain for fixed-asset POs.
   * Journal Entry    — by Journal Entry Template.
-  * Payment Entry    — by supplier-payment category (advance / PI payment / due payment).
+  * Payment Entry    — by supplier-payment category (advance vs PI payment).
 """
 
 import frappe
@@ -33,15 +33,13 @@ ASSET_GROUP = "Asset"
 # ── Payment Entry (supplier payments) — category-routed ───────────────────────
 PE_INITIATE_ROLE = "Accounts User"          # drafts + sends the payment (accounts doc)
 PE_CHAINS = {
-	"Advance":     ["Purchase Manager", "Finance Manager", "Accountant"],   # advance vs PO
-	"PI Payment":  ["Finance Manager", "Accountant"],                       # against a PI (material or service)
-	"Due Payment": ["HO Accounts", "Finance Manager", "Accountant"],        # on-account supplier settlement
+	"Advance":     ["Purchase Manager", "Finance Manager", "Accountant"],   # PO ref OR unallocated prepay
+	"PI Payment":  ["Finance Manager", "Accountant"],                       # allocated to a PI (material/service/due)
 }
 PE_COND = {
 	"Advance":     'doc.custom_payment_category == "Advance"',
 	# Materials (stock) and Service PI payments share one chain; label kept for reporting.
 	"PI Payment":  '(doc.custom_payment_category == "Materials") or (doc.custom_payment_category == "Service")',
-	"Due Payment": 'doc.custom_payment_category == "Due Payment"',
 }
 
 
@@ -102,10 +100,12 @@ def stamp_purchase_order(doc, method=None):
 
 def stamp_payment_entry(doc, method=None):
 	"""before_save(Payment Entry): categorise supplier payments so the workflow routes.
-	  Advance     — pays against a Purchase Order
-	  Materials   — pays against a Purchase Invoice with no approval group (stock)
-	  Service     — pays against a Purchase Invoice that carries an approval group
-	  Due Payment — supplier payment with no reference (on-account settlement)
+	  Materials — pays against a Purchase Invoice with no approval group (stock)
+	  Service   — pays against a Purchase Invoice that carries an approval group
+	  Advance   — pays against a Purchase Order, OR has no reference at all (an
+	              unallocated / on-account prepayment sits as a supplier advance)
+	'Due payment of suppliers' is a Purchase-Invoice settlement, so it falls under the
+	PI-Payment (Materials/Service) chain — there is no separate Due category.
 	Non-supplier payments (customer receipts, internal transfer) get no category and
 	submit directly — they are never forced through the supplier-approval workflow."""
 	if not frappe.db.has_column("Payment Entry", "custom_payment_category"):
@@ -113,19 +113,17 @@ def stamp_payment_entry(doc, method=None):
 	cat = ""
 	if doc.get("payment_type") == "Pay" and doc.get("party_type") == "Supplier":
 		refs = doc.get("references") or []
-		ref_dts = {r.get("reference_doctype") for r in refs if r.get("reference_doctype")}
-		if "Purchase Order" in ref_dts:
-			cat = "Advance"
-		elif "Purchase Invoice" in ref_dts:
+		if any(r.get("reference_doctype") == "Purchase Invoice" for r in refs):
+			# paying booked invoice(s) — materials, or service if a referenced PI has a group
 			cat = "Materials"
 			pis = [r.get("reference_name") for r in refs
 			       if r.get("reference_doctype") == "Purchase Invoice" and r.get("reference_name")]
-			if pis and frappe.db.has_column("Purchase Invoice", FIELD):
-				if frappe.get_all("Purchase Invoice",
-				                  filters={"name": ["in", pis], FIELD: ["is", "set"]}, limit=1):
-					cat = "Service"
+			if pis and frappe.db.has_column("Purchase Invoice", FIELD) and frappe.get_all(
+					"Purchase Invoice", filters={"name": ["in", pis], FIELD: ["is", "set"]}, limit=1):
+				cat = "Service"
 		else:
-			cat = "Due Payment"
+			# references a Purchase Order, or nothing (unallocated) → on-account advance
+			cat = "Advance"
 	doc.set("custom_payment_category", cat)
 
 

@@ -27,7 +27,7 @@ def _ensure_asset_group():
 
 def _ensure_pe_roles():
 	# Roles the Payment Entry workflow routes to (chains are code-defined, not group-based).
-	for r in ["Accounts User", "Purchase Manager", "Finance Manager", "HO Accounts", "Accountant"]:
+	for r in ["Accounts User", "Purchase Manager", "Finance Manager", "Accountant"]:
 		_ensure_role(r)
 
 
