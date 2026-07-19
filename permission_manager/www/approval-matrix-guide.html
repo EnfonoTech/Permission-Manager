@@ -1,5 +1,6 @@
-<!-- Approval Matrix — account-driven approval routing reference.
-     Served at /approval-matrix-guide on any site with permission_manager. -->
+<!-- Approval Matrix — account-driven + transaction-type approval routing reference.
+     Served at /approval-matrix-guide on any site with permission_manager.
+     Three tabs: Sheet 1 (account-driven), Sheet 2 (transaction flows), Configure & Extend. -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,17 +11,21 @@
   :root{--g1:#0f766e;--g2:#115e59;--ink:#1f2937;--mut:#6b7280;--line:#e5e7eb;--bg:#f8fafc;--card:#fff;--accent:#0d9488;}
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
-  header.h{background:linear-gradient(120deg,var(--g1),var(--g2));color:#fff;padding:40px 32px}
+  header.h{background:linear-gradient(120deg,var(--g1),var(--g2));color:#fff;padding:38px 32px 22px}
   header.h h1{margin:0;font-size:28px}
-  header.h p{margin:8px 0 0;opacity:.9;max-width:820px}
-  .wrap{display:flex;gap:28px;max-width:1180px;margin:0 auto;padding:28px 20px}
-  nav.toc{position:sticky;top:16px;align-self:flex-start;min-width:220px;font-size:14px}
-  nav.toc a{display:block;color:var(--mut);text-decoration:none;padding:5px 10px;border-left:2px solid transparent;border-radius:0 6px 6px 0}
-  nav.toc a:hover{color:var(--accent);border-left-color:var(--accent);background:#f0fdfa}
-  main{flex:1;min-width:0}
-  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:20px}
+  header.h p{margin:8px 0 0;opacity:.9;max-width:860px}
+  /* tab bar */
+  .tabbar{max-width:1180px;margin:0 auto;padding:0 20px;display:flex;gap:8px;flex-wrap:wrap;transform:translateY(14px)}
+  .tabbtn{border:1px solid var(--line);border-bottom:none;background:#eef2f1;color:var(--mut);font-size:14px;font-weight:600;
+          padding:11px 18px;border-radius:10px 10px 0 0;cursor:pointer;white-space:nowrap}
+  .tabbtn small{display:block;font-weight:400;font-size:11.5px;opacity:.8;margin-top:1px}
+  .tabbtn.active{background:var(--card);color:var(--g1);border-color:var(--line);box-shadow:0 -2px 0 var(--accent) inset}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 20px 8px}
+  .panel{display:none}
+  .panel.active{display:block}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 26px;margin-bottom:18px}
   h2{margin-top:4px;font-size:20px;border-bottom:2px solid #f0fdfa;padding-bottom:8px}
-  h3{font-size:16px;margin-bottom:6px}
+  h3{font-size:16px;margin:16px 0 4px}
   code{background:#f1f5f9;padding:1px 6px;border-radius:5px;font-size:13px}
   table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px;overflow:auto;display:block}
   th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
@@ -34,150 +39,238 @@
   .note{background:#f0fdfa;border-left:4px solid var(--accent);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
   .warn{background:#fff7ed;border-left:4px solid #f59e0b}
   .pill{font-size:12px;background:#e0f2fe;color:#075985;border-radius:20px;padding:2px 10px;margin-right:4px;white-space:nowrap}
-  footer{max-width:1180px;margin:0 auto;padding:20px;color:var(--mut);font-size:13px}
+  .live{display:inline-block;font-size:11.5px;font-weight:700;color:#065f46;background:#d1fae5;border-radius:20px;padding:1px 9px}
+  .plan{display:inline-block;font-size:11.5px;font-weight:700;color:#92400e;background:#fef3c7;border-radius:20px;padding:1px 9px}
+  .lede{color:var(--mut);font-size:14px;margin:0 0 4px}
 </style>
 </head>
 <body>
 <header class="h">
   <h1>Approval Matrix — Setup &amp; Working Guide</h1>
-  <p>Account-driven approval routing on PM Workflow. Configure by <b>tagging accounts</b>, not by editing code — works for any company. This page explains how to set the fields and how every routing case behaves.</p>
+  <p>Two approval systems on one engine. <b>Sheet 1</b> routes <b>expenses by the account</b> they book to; <b>Sheet 2</b> routes each <b>transaction type</b> (PO, receipt, invoice, payment&hellip;). Both are configured by <b>data, not code</b>. The third tab shows how to change any chain or add a new one.</p>
 </header>
 
-<div class="wrap">
-<nav class="toc">
-  <a href="#overview">1. Overview</a>
-  <a href="#concepts">2. Key concepts</a>
-  <a href="#tag">3. Tag an account</a>
-  <a href="#pi">4. Purchase Invoice routing</a>
-  <a href="#je">5. Journal Entry routing</a>
-  <a href="#popr">6. PO &amp; Purchase Receipt</a>
-  <a href="#actions">7. Approve / reject / rules</a>
-  <a href="#chain">8. Change a chain (config)</a>
-  <a href="#people">9. Change who approves</a>
-  <a href="#newco">10. New company setup</a>
-  <a href="#ref">11. Reference tables</a>
-</nav>
-
-<main>
-
-<section id="overview">
-  <h2>1. Overview</h2>
-  <p>Every purchase / expense transaction is routed to the right approver automatically. The route is decided by the <b>account</b> the money is booked to (for expense/service items and journals) or by the <b>document type</b> (purchase order, receipt, material invoice). Approvers are <b>roles</b>; the actual people are attached through <b>Role Profiles</b>, so changing an approver never touches the workflow.</p>
-  <div class="note">Golden rule: <b>you configure by data, not code.</b> Tag your accounts with an <span class="tag">Approval Group</span> and assign people to Role Profiles. Nothing else needs editing.</div>
-</section>
-
-<section id="concepts">
-  <h2>2. Key concepts</h2>
-  <table>
-    <tr><th>Term</th><th>What it is</th></tr>
-    <tr><td><b>Approval Group</b></td><td>A category on an <b>Account</b> (<code>custom_approval_group</code>): <span class="pill">Payroll</span><span class="pill">Utilities</span><span class="pill">Office</span><span class="pill">Rent</span><span class="pill">Vehicle</span>. It decides which department head approves an expense booked to that account.</td></tr>
-    <tr><td><b>Position role</b></td><td>The approver, e.g. <code>Vehicle Dept Head</code>, <code>Finance Manager</code>, <code>Accountant</code>. Roles never change per person.</td></tr>
-    <tr><td><b>Role Profile</b></td><td>A bundle assigned to a user that grants a position role + base access. Change the person = reassign the profile.</td></tr>
-    <tr><td><b>Approval Group (on the invoice)</b></td><td>A read-only header field auto-filled from the line account's group. The workflow reads this to route. You never set it by hand.</td></tr>
-  </table>
-</section>
-
-<section id="tag">
-  <h2>3. How to tag an account</h2>
-  <p>This is the <b>only</b> setup step for expense routing. Open the expense/cost <b>Account</b> and set its <b>Approval Group</b>.</p>
-  <div class="step"><div class="num">1</div><div>Go to <b>Accounting &rsaquo; Chart of Accounts</b> (or the Account list) and open an expense account, e.g. <i>Fuel Expenses – Vehicles</i>.</div></div>
-  <div class="step"><div class="num">2</div><div>Set the <b>Approval Group</b> field (e.g. <span class="tag">Vehicle</span>) and save.</div></div>
-  <div class="step"><div class="num">3</div><div>Optional: tag a <b>parent</b> account instead — all its child accounts inherit the group automatically. Tag a few parents, not every leaf.</div></div>
-  <figure><svg viewBox="0 0 900 330" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="330" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="15" font-weight="700">Account &#8250; 52010800001 - Fuel Expenses – Vehicles - SFB</text><text x="30" y="92" fill="#6b7280" font-size="13">Account Name</text><rect x="30" y="104" width="380" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="126" fill="#1f2937" font-size="13">Fuel Expenses – Vehicles</text><text x="480" y="92" fill="#6b7280" font-size="13">Account Type</text><rect x="480" y="104" width="380" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="492" y="126" fill="#1f2937" font-size="13">Expense Account</text><text x="30" y="176" fill="#0d9488" font-size="13" font-weight="700">Approval Group</text><rect x="30" y="188" width="380" height="36" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5" rx="6"/><text x="44" y="211" fill="#0f766e" font-size="14" font-weight="700">Vehicle</text><text x="425" y="210" fill="#9ca3af" font-size="20">&#9662;</text><text x="30" y="250" fill="#6b7280" font-size="12">Set once per expense account (or a parent account — children inherit).</text><text x="30" y="270" fill="#6b7280" font-size="12">This tag is what routes any invoice / journal booked to this account.</text></svg><figcaption>Fig 1 — The <b>Approval Group</b> field on an expense Account (test server). Set once per account (or parent).</figcaption></figure>
-  <div class="note">Tagging by <b>account</b> is what makes this portable: a new company just tags its own accounts — no account numbers are hard-coded anywhere.</div>
-</section>
-
-<section id="pi">
-  <h2>4. Purchase Invoice routing</h2>
-  <p>When a Purchase Invoice is saved, the invoice's <b>Approval Group</b> is filled from the first expense line's account (inheriting from parents). On <b>Send for Approval</b> the workflow routes:</p>
-  <table>
-    <tr><th>Invoice kind</th><th>How it's detected</th><th>Approval chain</th></tr>
-    <tr><td>Material — <b>Local</b></td><td>no account group, currency = company currency</td><td>Purchase Assistant</td></tr>
-    <tr><td>Material — <b>Import</b></td><td>no account group, foreign currency</td><td>Purchase Manager</td></tr>
-    <tr><td><b>Return</b></td><td>is a return</td><td>Purchase Assistant</td></tr>
-    <tr><td>Service — <span class="tag">Vehicle</span></td><td>line account tagged Vehicle</td><td>Vehicle Dept Head &rarr; Accountant</td></tr>
-    <tr><td>Service — <span class="tag">Payroll</span></td><td>line account tagged Payroll</td><td>Finance Manager &rarr; Accountant</td></tr>
-    <tr><td>Service — <span class="tag">Office</span> / <span class="tag">Rent</span></td><td>line account tagged Office/Rent</td><td>Branch Head &rarr; Accountant</td></tr>
-    <tr><td>Service — <span class="tag">Utilities</span></td><td>line account tagged Utilities</td><td>Department Head &rarr; Accountant</td></tr>
-  </table>
-  <p><b>Service item</b> = a non-stock Item whose <code>Item Defaults &rsaquo; Expense Account</code> is a tagged account. Adding it to a PI carries that account onto the line, which fills the invoice's Approval Group.</p>
-  <figure><svg viewBox="0 0 900 360" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="360" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Accounting &#8250; Purchase Invoice &#8250; 2002000005</text><text x="18" y="78" fill="#111827" font-size="17" font-weight="700">Desert Line Interiors Co W.L.L</text><rect x="330" y="63" width="86" height="24" rx="12" fill="#fef3c7"/><text x="343" y="80" fill="#92400e" font-size="13" font-weight="700">Pending</text><rect x="690" y="60" width="98" height="30" rx="6" fill="#0f766e"/><text x="708" y="80" fill="#fff" font-size="13" font-weight="600">Workflow &#9662;</text><rect x="0" y="104" width="900" height="30" fill="#eff6ff"/><text x="18" y="124" fill="#1e3a8a" font-size="13">&#128274; Pending approval from: <tspan font-weight="700">Vehicle Dept Head</tspan></text><text x="30" y="180" fill="#6b7280" font-size="13">Supplier</text><rect x="30" y="192" width="360" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="214" fill="#1f2937" font-size="13">DESERT LINE INTERIORS CO W.L.L</text><text x="30" y="262" fill="#0d9488" font-size="13" font-weight="700">Approval Group</text><rect x="30" y="274" width="360" height="34" fill="#f8fafc" stroke="#e5e7eb" rx="6"/><text x="42" y="296" fill="#1f2937" font-size="13" font-weight="700">Vehicle</text><text x="30" y="330" fill="#6b7280" font-size="11.5">Auto-set from the line expense account's Approval Group. Read-only; drives PM Workflow routing.</text></svg><figcaption>Fig 2 — A service Purchase Invoice: <b>Approval Group = Vehicle</b> (auto-filled), sitting at <b>Pending</b> for the Vehicle Dept Head (test server).</figcaption></figure>
-</section>
-
-<section id="je">
-  <h2>5. Journal Entry routing</h2>
-  <p>Journals route by the <b>Journal Entry Template</b> you pick (the template also pre-fills the ledgers). Normal JVs with no template submit directly.</p>
-  <table>
-    <tr><th>Template</th><th>Approval chain</th></tr>
-    <tr><td>Fuel Expense JV / Vehicle Expense JV</td><td>Vehicle Dept Head &rarr; Accountant</td></tr>
-    <tr><td>Expense JV (Petty Cash)</td><td>Petty Cash Coordinator &rarr; Accountant</td></tr>
-    <tr><td>Loyalty Reward Entry</td><td>Operations &rarr; Accountant</td></tr>
-    <tr><td>Payroll JV</td><td>Finance Manager &rarr; Accountant</td></tr>
-    <tr><td>Office Expense JV / Rent JV</td><td>Branch Head &rarr; Accountant</td></tr>
-    <tr><td>Utilities JV</td><td>Department Head &rarr; Accountant</td></tr>
-    <tr><td><i>(no template)</i></td><td>Accounts User submits directly — no approval</td></tr>
-  </table>
-  <figure><svg viewBox="0 0 900 220" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="220" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Accounting &#8250; Journal Entry &#8250; New</text><text x="30" y="92" fill="#0d9488" font-size="13" font-weight="700">From Template</text><rect x="30" y="104" width="360" height="36" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5" rx="6"/><text x="44" y="127" fill="#0f766e" font-size="14" font-weight="700">Fuel Expense JV</text><text x="405" y="127" fill="#9ca3af" font-size="20">&#9662;</text><text x="30" y="176" fill="#6b7280" font-size="12">Picking the template pre-fills the ledgers AND sets the route:</text><text x="30" y="196" fill="#374151" font-size="12" font-weight="600">Fuel Expense JV &#8594; Vehicle Dept Head &#8594; Accountant.</text></svg><figcaption>Fig 3 — Selecting a Journal Entry Template sets the route (test server).</figcaption></figure>
-</section>
-
-<section id="popr">
-  <h2>6. Purchase Order &amp; Purchase Receipt</h2>
-  <table>
-    <tr><th>Document</th><th>Chain</th><th>Attachment</th></tr>
-    <tr><td>Purchase Order</td><td>Branch Head</td><td>Quotation / comment</td></tr>
-    <tr><td>Purchase Receipt</td><td>Inventory Head</td><td>Delivery Note (required on Send)</td></tr>
-  </table>
-</section>
-
-<section id="actions">
-  <h2>7. Approving, rejecting &amp; the rules</h2>
-  <div class="step"><div class="num">1</div><div><b>Send for Approval</b> — the creator sends the draft; it moves to <b>Pending</b> and waits for the routed approver.</div></div>
-  <div class="step"><div class="num">2</div><div><b>Approve</b> — only a user holding the routed role sees the Approve action. Two-level routes (service PI / JV) go to a department head first, then the Accountant.</div></div>
-  <div class="step"><div class="num">3</div><div><b>Reject</b> — returns the document for correction; a <b>comment is required</b>.</div></div>
-  <figure><svg viewBox="0 0 900 240" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="240" fill="#f3f4f6"/><rect x="590" y="20" width="120" height="32" rx="6" fill="#0f766e"/><text x="610" y="41" fill="#fff" font-size="13" font-weight="600">Workflow &#9662;</text><rect x="590" y="58" width="200" height="120" rx="8" fill="#fff" stroke="#e5e7eb"/><rect x="590" y="66" width="200" height="52" fill="#f0fdfa"/><text x="606" y="98" fill="#0f766e" font-size="14" font-weight="700">&#10003; Approve</text><line x1="600" y1="118" x2="780" y2="118" stroke="#f1f5f9"/><text x="606" y="150" fill="#b91c1c" font-size="14" font-weight="700">&#10005; Reject</text><text x="30" y="210" fill="#6b7280" font-size="12">Only the routed approver (here: Vehicle Dept Head) sees these. Reject requires a comment; you cannot approve your own document.</text></svg><figcaption>Fig 4 — Workflow action buttons shown to the routed approver (test server).</figcaption></figure>
-  <div class="note"><b>Built-in guards:</b> a user cannot approve a document they created (<i>no self-approval</i>); a user without the routed role never sees Approve; attachments are enforced where required (Purchase Receipt, templated JVs).</div>
-</section>
-
-<section id="chain">
-  <h2>8. Changing an approval chain (no code)</h2>
-  <p>Each account group's chain is a record in <b>PM Approval Group</b> — editable in the desk. The <b>Group Name</b> matches the account tag; the <b>Stages</b> table is the ordered list of approver roles.</p>
-  <div class="step"><div class="num">1</div><div>Open <b>PM Approval Group</b> (e.g. <i>Vehicle</i>).</div></div>
-  <div class="step"><div class="num">2</div><div>Edit the <b>Stages</b> — reorder, add or remove approver roles (e.g. change stage 1 from <i>Vehicle Dept Head</i> to <i>Operations</i>, or insert an extra level). Optionally set a Journal Entry Template list so the same chain applies to those JVs.</div></div>
-  <div class="step"><div class="num">3</div><div><b>Save</b> — the Purchase Invoice &amp; Journal Entry workflows regenerate automatically from the config. No transition editing, no code.</div></div>
-  <div class="note">Group tag (on the Account) → <b>PM Approval Group</b> (the chain) → generated workflow. Change the chain by editing data; change the <i>person</i> by reassigning a Role Profile (below).</div>
-</section>
-
-<section id="people">
-  <h2>9. Changing who approves (the person)</h2>
-  <p>Approvers are roles, so you never edit the workflow to change a person:</p>
-  <div class="step"><div class="num">1</div><div>Open the <b>User</b> and set their <b>Role Profile</b> to the position (e.g. <i>Vehicle Dept Head</i>).</div></div>
-  <div class="step"><div class="num">2</div><div>To move the role to someone else, reassign that Role Profile. Approvals in flight instantly recognise the new holder.</div></div>
-  <div class="note">A person can be assigned <b>after</b> a document is already sent for approval — the pending item appears in their inbox as soon as they get the role.</div>
-</section>
-
-<section id="newco">
-  <h2>10. Setting this up for a new company</h2>
-  <div class="step"><div class="num">1</div><div>Install the app (<code>bench migrate</code>) — it creates the <b>Approval Group</b> field on Account and Purchase Invoice, and activates routing.</div></div>
-  <div class="step"><div class="num">2</div><div><b>Tag the company's expense accounts</b> with their Approval Group (or tag parent accounts). No numbers, no code.</div></div>
-  <div class="step"><div class="num">3</div><div>Create the position <b>Role Profiles</b> and assign users.</div></div>
-  <div class="step"><div class="num">4</div><div>The workflows are role-based — copy them across (fixture export/import) or rebuild; they need no per-company edits.</div></div>
-</section>
-
-<section id="ref">
-  <h2>11. Reference — group &rarr; approver</h2>
-  <table>
-    <tr><th>Approval Group</th><th>Service PI</th><th>Journal (template)</th></tr>
-    <tr><td>Vehicle</td><td>Vehicle Dept Head &rarr; Accountant</td><td>Fuel / Vehicle JV &rarr; Vehicle Dept Head &rarr; Accountant</td></tr>
-    <tr><td>Payroll</td><td>Finance Manager &rarr; Accountant</td><td>Payroll JV &rarr; Finance Manager &rarr; Accountant</td></tr>
-    <tr><td>Office</td><td>Branch Head &rarr; Accountant</td><td>Office Expense JV &rarr; Branch Head &rarr; Accountant</td></tr>
-    <tr><td>Rent</td><td>Branch Head &rarr; Accountant</td><td>Rent JV &rarr; Branch Head &rarr; Accountant</td></tr>
-    <tr><td>Utilities</td><td>Department Head &rarr; Accountant</td><td>Utilities JV &rarr; Department Head &rarr; Accountant</td></tr>
-    <tr><td>(untagged)</td><td>Local &rarr; Purchase Assistant · Import &rarr; Purchase Manager</td><td>No template &rarr; direct submit</td></tr>
-  </table>
-</section>
-
-</main>
+<div class="tabbar">
+  <button class="tabbtn active" data-tab="sheet1">Sheet 1 <small>Account-driven (service PO/PI/JE)</small></button>
+  <button class="tabbtn" data-tab="sheet2">Sheet 2 <small>Transaction-type flows</small></button>
+  <button class="tabbtn" data-tab="configure">Configure &amp; Extend <small>Change conditions · add a workflow</small></button>
 </div>
-<footer>Enfono Technologies · Approval Matrix on PM Workflow · configure by tagging accounts &amp; assigning role profiles.</footer>
+
+<div class="wrap">
+
+<!-- ============================ TAB 1 · SHEET 1 ============================ -->
+<div class="panel active" id="sheet1">
+
+  <section>
+    <h2>What Sheet 1 configures</h2>
+    <p class="lede">Excel &bull; sheet <i>&ldquo;Service Item Purchase Order and Purchase Invoice&rdquo;</i> &mdash; columns <code>Account | Initiate | Access | Approval 1 | Approval 2</code>.</p>
+    <p>Every expense/service line is routed by the <b>account</b> the money books to. Instead of hard-coding 30-odd account numbers, each account carries an <b>Approval Group</b> tag, and each group owns an ordered <b>approval chain</b>. Any invoice or journal touching that account inherits the route automatically &mdash; so the same setup works for any company without editing code.</p>
+    <div class="note">Golden rule for Sheet 1: <b>tag the account, assign the people.</b> Account &rarr; <span class="tag">Approval Group</span> &rarr; chain &rarr; generated workflow.</div>
+  </section>
+
+  <section>
+    <h2>Key concepts</h2>
+    <table>
+      <tr><th>Term</th><th>What it is</th></tr>
+      <tr><td><b>Approval Group</b></td><td>A tag on an <b>Account</b> (<code>custom_approval_group</code>, a Link field): <span class="pill">Payroll</span><span class="pill">Utilities</span><span class="pill">Office</span><span class="pill">Rent</span><span class="pill">Vehicle</span>. Decides which department head approves an expense booked there.</td></tr>
+      <tr><td><b>Position role</b></td><td>The approver, e.g. <code>Vehicle Dept Head</code>, <code>Finance Manager</code>, <code>Accountant</code>. Roles never change per person.</td></tr>
+      <tr><td><b>Role Profile</b></td><td>A bundle assigned to a user that grants a position role. Change the person = reassign the profile.</td></tr>
+      <tr><td><b>Approval Group (on the invoice)</b></td><td>A read-only header field auto-filled from the line account's group. The workflow reads this to route. Never set by hand.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Step 1 &mdash; Tag an account</h2>
+    <p>The <b>only</b> setup step for expense routing. Open the expense/cost <b>Account</b> and set its <b>Approval Group</b>.</p>
+    <div class="step"><div class="num">1</div><div>Go to <b>Accounting &rsaquo; Chart of Accounts</b> and open an expense account, e.g. <i>Fuel Expenses – Vehicles</i>.</div></div>
+    <div class="step"><div class="num">2</div><div>Set the <b>Approval Group</b> field (e.g. <span class="tag">Vehicle</span>) and save.</div></div>
+    <div class="step"><div class="num">3</div><div>Optional: tag a <b>parent</b> account instead &mdash; all child accounts inherit the group. Tag a few parents, not every leaf.</div></div>
+    <figure><svg viewBox="0 0 900 330" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="330" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="15" font-weight="700">Account &#8250; 52010800001 - Fuel Expenses – Vehicles - SFB</text><text x="30" y="92" fill="#6b7280" font-size="13">Account Name</text><rect x="30" y="104" width="380" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="126" fill="#1f2937" font-size="13">Fuel Expenses – Vehicles</text><text x="480" y="92" fill="#6b7280" font-size="13">Account Type</text><rect x="480" y="104" width="380" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="492" y="126" fill="#1f2937" font-size="13">Expense Account</text><text x="30" y="176" fill="#0d9488" font-size="13" font-weight="700">Approval Group</text><rect x="30" y="188" width="380" height="36" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5" rx="6"/><text x="44" y="211" fill="#0f766e" font-size="14" font-weight="700">Vehicle</text><text x="425" y="210" fill="#9ca3af" font-size="20">&#9662;</text><text x="30" y="250" fill="#6b7280" font-size="12">Set once per expense account (or a parent account — children inherit).</text><text x="30" y="270" fill="#6b7280" font-size="12">This tag is what routes any invoice / journal booked to this account.</text></svg><figcaption>Fig 1 &mdash; The <b>Approval Group</b> field on an expense Account (test server). Set once per account (or parent).</figcaption></figure>
+    <div class="note">Tagging by <b>account</b> is what makes this portable: a new company just tags its own accounts &mdash; no account numbers are hard-coded anywhere.</div>
+  </section>
+
+  <section>
+    <h2>Step 2 &mdash; how a Purchase Invoice routes</h2>
+    <p>When a Purchase Invoice is saved, its <b>Approval Group</b> is filled from the first expense line's account (inheriting from parents). On <b>Send for Approval</b> the workflow routes:</p>
+    <table>
+      <tr><th>Invoice kind</th><th>How it's detected</th><th>Approval chain</th></tr>
+      <tr><td>Material &mdash; <b>Local</b></td><td>no account group, currency = company currency</td><td>Purchase Assistant</td></tr>
+      <tr><td>Material &mdash; <b>Import</b></td><td>no account group, foreign currency</td><td>Purchase Manager</td></tr>
+      <tr><td><b>Return</b></td><td>is a return</td><td>Purchase Assistant</td></tr>
+      <tr><td>Service &mdash; <span class="tag">Vehicle</span></td><td>line account tagged Vehicle</td><td>Vehicle Dept Head &rarr; Accountant</td></tr>
+      <tr><td>Service &mdash; <span class="tag">Payroll</span></td><td>line account tagged Payroll</td><td>Finance Manager &rarr; Accountant</td></tr>
+      <tr><td>Service &mdash; <span class="tag">Office</span> / <span class="tag">Rent</span></td><td>line account tagged Office/Rent</td><td>Branch Head &rarr; Accountant</td></tr>
+      <tr><td>Service &mdash; <span class="tag">Utilities</span></td><td>line account tagged Utilities</td><td>Department Head &rarr; Accountant</td></tr>
+    </table>
+    <p><b>Service item</b> = a non-stock Item whose <code>Item Defaults &rsaquo; Expense Account</code> is a tagged account. Adding it to a PI carries that account onto the line, which fills the invoice's Approval Group. (Alternatively, set the expense account directly on the line, or book it in a Journal Entry.)</p>
+    <figure><svg viewBox="0 0 900 360" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="360" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Accounting &#8250; Purchase Invoice &#8250; 2002000005</text><text x="18" y="78" fill="#111827" font-size="17" font-weight="700">Desert Line Interiors Co W.L.L</text><rect x="330" y="63" width="86" height="24" rx="12" fill="#fef3c7"/><text x="343" y="80" fill="#92400e" font-size="13" font-weight="700">Pending</text><rect x="690" y="60" width="98" height="30" rx="6" fill="#0f766e"/><text x="708" y="80" fill="#fff" font-size="13" font-weight="600">Workflow &#9662;</text><rect x="0" y="104" width="900" height="30" fill="#eff6ff"/><text x="18" y="124" fill="#1e3a8a" font-size="13">&#128274; Pending approval from: <tspan font-weight="700">Vehicle Dept Head</tspan></text><text x="30" y="180" fill="#6b7280" font-size="13">Supplier</text><rect x="30" y="192" width="360" height="34" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="214" fill="#1f2937" font-size="13">DESERT LINE INTERIORS CO W.L.L</text><text x="30" y="262" fill="#0d9488" font-size="13" font-weight="700">Approval Group</text><rect x="30" y="274" width="360" height="34" fill="#f8fafc" stroke="#e5e7eb" rx="6"/><text x="42" y="296" fill="#1f2937" font-size="13" font-weight="700">Vehicle</text><text x="30" y="330" fill="#6b7280" font-size="11.5">Auto-set from the line expense account's Approval Group. Read-only; drives PM Workflow routing.</text></svg><figcaption>Fig 2 &mdash; A service Purchase Invoice: <b>Approval Group = Vehicle</b> (auto-filled), sitting at <b>Pending</b> for the Vehicle Dept Head (test server).</figcaption></figure>
+  </section>
+
+  <section>
+    <h2>Step 3 &mdash; how a Journal Entry routes</h2>
+    <p>Journals route by the <b>Journal Entry Template</b> you pick (the template also pre-fills the ledgers). Normal JVs with no template submit directly.</p>
+    <table>
+      <tr><th>Template</th><th>Approval chain</th></tr>
+      <tr><td>Fuel Expense JV / Vehicle Expense JV</td><td>Vehicle Dept Head &rarr; Accountant</td></tr>
+      <tr><td>Expense JV (Petty Cash)</td><td>Petty Cash Coordinator &rarr; Accountant</td></tr>
+      <tr><td>Loyalty Reward Entry</td><td>Operations &rarr; Accountant</td></tr>
+      <tr><td>Payroll JV</td><td>Finance Manager &rarr; Accountant</td></tr>
+      <tr><td>Office Expense JV / Rent JV</td><td>Branch Head &rarr; Accountant</td></tr>
+      <tr><td>Utilities JV</td><td>Department Head &rarr; Accountant</td></tr>
+      <tr><td><i>(no template)</i></td><td>Accounts User submits directly &mdash; no approval</td></tr>
+    </table>
+    <figure><svg viewBox="0 0 900 220" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="220" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Accounting &#8250; Journal Entry &#8250; New</text><text x="30" y="92" fill="#0d9488" font-size="13" font-weight="700">From Template</text><rect x="30" y="104" width="360" height="36" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5" rx="6"/><text x="44" y="127" fill="#0f766e" font-size="14" font-weight="700">Fuel Expense JV</text><text x="405" y="127" fill="#9ca3af" font-size="20">&#9662;</text><text x="30" y="176" fill="#6b7280" font-size="12">Picking the template pre-fills the ledgers AND sets the route:</text><text x="30" y="196" fill="#374151" font-size="12" font-weight="600">Fuel Expense JV &#8594; Vehicle Dept Head &#8594; Accountant.</text></svg><figcaption>Fig 3 &mdash; Selecting a Journal Entry Template sets the route (test server).</figcaption></figure>
+  </section>
+
+  <section>
+    <h2>Reference &mdash; group &rarr; approver</h2>
+    <table>
+      <tr><th>Approval Group</th><th>Service PI</th><th>Journal (template)</th></tr>
+      <tr><td>Vehicle</td><td>Vehicle Dept Head &rarr; Accountant</td><td>Fuel / Vehicle JV &rarr; Vehicle Dept Head &rarr; Accountant</td></tr>
+      <tr><td>Payroll</td><td>Finance Manager &rarr; Accountant</td><td>Payroll JV &rarr; Finance Manager &rarr; Accountant</td></tr>
+      <tr><td>Office</td><td>Branch Head &rarr; Accountant</td><td>Office Expense JV &rarr; Branch Head &rarr; Accountant</td></tr>
+      <tr><td>Rent</td><td>Branch Head &rarr; Accountant</td><td>Rent JV &rarr; Branch Head &rarr; Accountant</td></tr>
+      <tr><td>Utilities</td><td>Department Head &rarr; Accountant</td><td>Utilities JV &rarr; Department Head &rarr; Accountant</td></tr>
+      <tr><td>(untagged)</td><td>Local &rarr; Purchase Assistant &middot; Import &rarr; Purchase Manager</td><td>No template &rarr; direct submit</td></tr>
+    </table>
+    <div class="note">To change any of these chains, add a new group, or change who holds a role &mdash; see the <b>Configure &amp; Extend</b> tab.</div>
+  </section>
+
+</div>
+
+<!-- ============================ TAB 2 · SHEET 2 ============================ -->
+<div class="panel" id="sheet2">
+
+  <section>
+    <h2>What Sheet 2 configures</h2>
+    <p class="lede">Excel &bull; sheet 2 &mdash; columns <code>Transaction Type | Initiated By | Approval Flow | Payment / Done | Documents Required</code>.</p>
+    <p>Sheet 2 is <b>per document type</b>: each transaction (Purchase Order, Purchase Receipt, material invoice, payments, asset, employee&hellip;) has its own fixed chain, independent of the account tag. Each is a <b>PM Workflow</b> on that DocType. Rows that book a <i>service/expense account</i> (fuel, rent, utilities, petty-cash JVs) route through Sheet 1 &mdash; the two sheets meet there.</p>
+    <div class="note"><span class="live">LIVE</span> = built &amp; running now. <span class="plan">PLANNED</span> = agreed in the matrix, not yet switched on (turn on the same way &mdash; see tab 3).</div>
+  </section>
+
+  <section>
+    <h2>Transaction flows (Sheet 2 &rarr; system)</h2>
+    <table>
+      <tr><th>Transaction (Excel)</th><th>Approval flow</th><th>Attachment</th><th>Where it lives</th><th>Status</th></tr>
+      <tr><td>Purchase Order</td><td>Branch Head</td><td>Quotation &mdash; or a <b>Verbal</b> comment (see tab 3)</td><td>PO workflow</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Purchase Receipt</td><td>Inventory Head</td><td>Delivery Note</td><td>PR workflow</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Purchase Invoice (Local)</td><td>Purchase Assistant</td><td>&mdash;</td><td>PI workflow (material branch)</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Purchase Invoice (Import)</td><td>Purchase Manager</td><td>&mdash;</td><td>PI workflow (material branch)</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Expense Invoice &mdash; Service Item</td><td>Dept Head &rarr; Accountant <i>(by account tag)</i></td><td>Tax Invoice</td><td>PI workflow &rarr; <b>Sheet 1</b></td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Purchase Return</td><td>Purchase Assistant</td><td>Return Documents</td><td>PI workflow (return branch)</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Expense / Fuel / Petty-Cash JV</td><td>Dept Head &rarr; Accountant <i>(by JE template)</i></td><td>Invoice / Bill</td><td>JE workflow &rarr; <b>Sheet 1</b></td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Stock Entry</td><td>Acceptance step</td><td>&mdash;</td><td>Stock Entry workflow</td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>Advance payment against PO</td><td>Purchase Mgr &rarr; Finance/GM &rarr; Accountant</td><td>Payment Slip</td><td>Payment Entry workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Payment against PI (Materials)</td><td>Finance/GM &rarr; Accountant</td><td>Payment Slip</td><td>Payment Entry workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Due Payment of Suppliers</td><td>HO Accounts recon &rarr; Finance/GM &rarr; Accountant</td><td>Outstanding Statement</td><td>Payment Entry workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Asset Purchase Invoice / Order</td><td>Dept Head &rarr; GM &rarr; Accountant</td><td>PO + Invoice</td><td>Asset / PI workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Employee Payment</td><td>Finance/GM &rarr; (Siddique)</td><td>Supporting Docs</td><td>Payment Entry workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Employee Reimbursement</td><td>HR &rarr; Finance &rarr; GM &rarr; Accountant</td><td>Expense Documents</td><td>Expense Claim workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Loyalty Reward (Sales Invoice)</td><td>Branch/Accounts up to limit; Operations above</td><td>Mandatory Attachments</td><td>Sales Invoice workflow</td><td><span class="plan">PLANNED</span></td></tr>
+      <tr><td>Manual Loyalty Reward &mdash; JV</td><td>Operations &rarr; Accountant</td><td>Supporting Docs</td><td>JE template &rarr; <b>Sheet 1</b></td><td><span class="live">LIVE</span></td></tr>
+      <tr><td>PDC Entry</td><td>Accounts notified on cheque date</td><td>Cheque Details</td><td>Notification (no approval step)</td><td><span class="plan">PLANNED</span></td></tr>
+    </table>
+    <div class="note">Note: <b>Sales Return</b> from the original matrix is intentionally excluded per the current scope.</div>
+  </section>
+
+  <section>
+    <h2>Purchase Order &mdash; Verbal option</h2>
+    <p>A PO normally needs a <b>Quotation</b> attached before it can be sent. For orders placed verbally, tick <b>Verbal (No Quotation)</b> &mdash; a <b>Verbal Comment</b> box appears (and is required); write what was agreed. When Verbal is ticked, no attachment is enforced on <b>Send for Approval</b>.</p>
+    <table>
+      <tr><th>Verbal</th><th>Comment</th><th>Attachment on Send</th></tr>
+      <tr><td>unticked (default)</td><td>not shown</td><td>Quotation <b>required</b></td></tr>
+      <tr><td>ticked</td><td><b>required</b> (what was agreed, with whom)</td><td>not required</td></tr>
+    </table>
+    <figure><svg viewBox="0 0 900 300" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="300" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Buying &#8250; Purchase Order &#8250; New</text><rect x="30" y="82" width="22" height="22" rx="4" fill="#0d9488"/><text x="36" y="99" fill="#fff" font-size="15" font-weight="700">&#10003;</text><text x="62" y="99" fill="#0f766e" font-size="14" font-weight="700">Verbal (No Quotation)</text><text x="30" y="146" fill="#0d9488" font-size="13" font-weight="700">Verbal Comment <tspan fill="#b91c1c">*</tspan></text><rect x="30" y="158" width="820" height="72" fill="#ecfeff" stroke="#0d9488" stroke-width="1.5" rx="6"/><text x="44" y="184" fill="#0f766e" font-size="13">Agreed by phone with Ramees on 18-Jul — 40 units @ 12.500,</text><text x="44" y="204" fill="#0f766e" font-size="13">delivery next week. Quotation to follow.</text><text x="30" y="262" fill="#6b7280" font-size="12">With Verbal ticked, Send for Approval does not ask for a Quotation attachment —</text><text x="30" y="280" fill="#6b7280" font-size="12">the comment is the audit trail. Untick it and a Quotation attachment becomes mandatory.</text></svg><figcaption>Fig 4 &mdash; Purchase Order with <b>Verbal</b> ticked; the required <b>Verbal Comment</b> replaces the Quotation attachment (test server).</figcaption></figure>
+  </section>
+
+  <section>
+    <h2>Approving, rejecting &amp; the guards</h2>
+    <div class="step"><div class="num">1</div><div><b>Send for Approval</b> &mdash; the creator sends the draft; it moves to <b>Pending</b> and waits for the routed approver.</div></div>
+    <div class="step"><div class="num">2</div><div><b>Approve</b> &mdash; only a user holding the routed role sees Approve. Two-level routes (service PI / JV / multi-stage) go to a department head first, then the Accountant.</div></div>
+    <div class="step"><div class="num">3</div><div><b>Reject</b> &mdash; returns the document for correction; a <b>comment is required</b>.</div></div>
+    <figure><svg viewBox="0 0 900 240" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="240" fill="#f3f4f6"/><rect x="590" y="20" width="120" height="32" rx="6" fill="#0f766e"/><text x="610" y="41" fill="#fff" font-size="13" font-weight="600">Workflow &#9662;</text><rect x="590" y="58" width="200" height="120" rx="8" fill="#fff" stroke="#e5e7eb"/><rect x="590" y="66" width="200" height="52" fill="#f0fdfa"/><text x="606" y="98" fill="#0f766e" font-size="14" font-weight="700">&#10003; Approve</text><line x1="600" y1="118" x2="780" y2="118" stroke="#f1f5f9"/><text x="606" y="150" fill="#b91c1c" font-size="14" font-weight="700">&#10005; Reject</text><text x="30" y="210" fill="#6b7280" font-size="12">Only the routed approver (here: Vehicle Dept Head) sees these. Reject requires a comment; you cannot approve your own document.</text></svg><figcaption>Fig 5 &mdash; Workflow action buttons shown to the routed approver (test server).</figcaption></figure>
+    <div class="note"><b>Built-in guards:</b> a user cannot approve a document they created (<i>no self-approval</i>); a user without the routed role never sees Approve; attachments are enforced where required (Purchase Receipt, non-verbal PO, templated JVs).</div>
+  </section>
+
+</div>
+
+<!-- ============================ TAB 3 · CONFIGURE & EXTEND ============================ -->
+<div class="panel" id="configure">
+
+  <section>
+    <h2>Change an approval chain (no code)</h2>
+    <p>Each Sheet-1 group's chain is a record in <b>PM Approval Group</b> &mdash; editable in the desk. The <b>Group Name</b> matches the account tag; the <b>Stages</b> table is the ordered list of approver roles.</p>
+    <div class="step"><div class="num">1</div><div>Open <b>PM Approval Group</b> (e.g. <i>Vehicle</i>).</div></div>
+    <div class="step"><div class="num">2</div><div>Edit the <b>Stages</b> &mdash; reorder, add or remove approver roles (e.g. change stage 1 from <i>Vehicle Dept Head</i> to <i>Operations</i>, or insert an extra level). Per stage you can also set <b>Require Attachment</b> / <b>Require Comment</b>.</div></div>
+    <div class="step"><div class="num">3</div><div><b>Save</b> &mdash; the Purchase Invoice &amp; Journal Entry workflows regenerate automatically from the config. No transition editing, no code.</div></div>
+    <figure><svg viewBox="0 0 900 300" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="300" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">PM Approval Group &#8250; Vehicle</text><text x="30" y="86" fill="#6b7280" font-size="13">Group Name</text><rect x="30" y="96" width="300" height="32" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="117" fill="#1f2937" font-size="13" font-weight="700">Vehicle</text><text x="30" y="160" fill="#0d9488" font-size="13" font-weight="700">Stages</text><rect x="30" y="172" width="820" height="96" fill="#fff" stroke="#0d9488" stroke-width="1.3" rx="6"/><line x1="30" y1="204" x2="850" y2="204" stroke="#e5e7eb"/><line x1="30" y1="236" x2="850" y2="236" stroke="#e5e7eb"/><line x1="90" y1="172" x2="90" y2="268" stroke="#e5e7eb"/><line x1="560" y1="172" x2="560" y2="268" stroke="#e5e7eb"/><line x1="700" y1="172" x2="700" y2="268" stroke="#e5e7eb"/><text x="44" y="192" fill="#6b7280" font-size="11">#</text><text x="100" y="192" fill="#6b7280" font-size="11">Approver Role</text><text x="570" y="192" fill="#6b7280" font-size="11">Req. Attach</text><text x="710" y="192" fill="#6b7280" font-size="11">Req. Comment</text><text x="48" y="225" fill="#374151" font-size="13">1</text><text x="100" y="225" fill="#111827" font-size="13" font-weight="600">Vehicle Dept Head</text><text x="600" y="225" fill="#9ca3af" font-size="13">&#9744;</text><text x="742" y="225" fill="#9ca3af" font-size="13">&#9744;</text><text x="48" y="257" fill="#374151" font-size="13">2</text><text x="100" y="257" fill="#111827" font-size="13" font-weight="600">Accountant</text><text x="600" y="257" fill="#0d9488" font-size="13">&#9745;</text><text x="742" y="257" fill="#9ca3af" font-size="13">&#9744;</text></svg><figcaption>Fig 6 &mdash; The <b>Vehicle</b> group's chain in PM Approval Group. Edit stages &amp; save; workflows rebuild automatically.</figcaption></figure>
+    <div class="note">Group tag (on the Account) &rarr; <b>PM Approval Group</b> (the chain) &rarr; generated workflow. Change the chain by editing data; change the <i>person</i> below.</div>
+  </section>
+
+  <section>
+    <h2>Change who approves (the person)</h2>
+    <p>Approvers are roles, so you never edit the workflow to change a person:</p>
+    <div class="step"><div class="num">1</div><div>Open the <b>User</b> and set their <b>Role Profile</b> to the position (e.g. <i>Vehicle Dept Head</i>).</div></div>
+    <div class="step"><div class="num">2</div><div>To move the role to someone else, reassign that Role Profile. Approvals in flight instantly recognise the new holder.</div></div>
+    <div class="note">A person can be assigned <b>after</b> a document is already sent for approval &mdash; the pending item appears in their inbox as soon as they get the role.</div>
+  </section>
+
+  <section>
+    <h2>Add a new expense category (new Sheet-1 group)</h2>
+    <div class="step"><div class="num">1</div><div>Create a new <b>PM Approval Group</b> (e.g. <i>Marketing</i>) and fill its <b>Stages</b>.</div></div>
+    <div class="step"><div class="num">2</div><div>Save &mdash; the workflows regenerate with a branch for the new group automatically.</div></div>
+    <div class="step"><div class="num">3</div><div>Tag the relevant <b>Accounts</b> with the new group (the <b>Approval Group</b> field is a Link, so new groups appear in the dropdown immediately).</div></div>
+    <div class="note">Because the field is a <b>Link</b> to PM Approval Group, adding a group needs zero code &mdash; it becomes selectable on accounts and self-routes on save.</div>
+  </section>
+
+  <section>
+    <h2>Change conditions / add a similar workflow (new DocType)</h2>
+    <p>Sheet-2 flows (PO, PR, PI, JE, and the planned Payment/Asset/Expense-Claim ones) are <b>PM Workflows</b> generated from config. To bring a planned row online, or clone an existing flow onto another DocType:</p>
+    <div class="step"><div class="num">1</div><div>Decide the chain (roles per stage) and the trigger <b>condition</b> &mdash; conditions read only the document's <b>header</b> fields (e.g. <code>doc.custom_approval_group</code>, <code>doc.is_return</code>, <code>doc.custom_verbal</code>, currency). They cannot read child-table rows, so any routing signal is stamped onto a header field first.</div></div>
+    <div class="step"><div class="num">2</div><div>Add / adjust the branch in the workflow generator and run the rebuild &mdash; a one-line, idempotent operation (<code>rebuild_approval_workflows()</code>); running it again is safe and simply re-syncs from the current config.</div></div>
+    <div class="step"><div class="num">3</div><div>Grant the DocType read/write to the approver roles (handled by the same rebuild) and clear cache. Test on UAT, then repeat on production.</div></div>
+    <div class="note"><b>Changing a condition</b> (e.g. the import threshold, or which currency counts as Local) is a config edit in the same place &mdash; not a rewrite. The header-field rule is the one constraint: whatever the condition tests must exist as a header field.</div>
+    <div class="note warn"><b>Who does this:</b> chain edits, adding a group, and changing a person are self-service in the desk. Bringing a <i>new DocType</i> online or changing a low-level condition is a small config change &mdash; raise it with the ERP team; it deploys UAT&rarr;production the same day.</div>
+  </section>
+
+  <section>
+    <h2>Ad-hoc approver (Forward) &mdash; and whether it comes back</h2>
+    <p>Sometimes an approval needs a one-off reviewer who isn't in the normal chain. From the inbox, an approver can <b>Forward</b> the item to another user. There are now <b>two</b> behaviours, chosen at forward time:</p>
+    <table>
+      <tr><th>Mode</th><th>What happens</th><th>Ends with</th></tr>
+      <tr><td><b>Forward</b> (hand-off)</td><td>The ad-hoc reviewer takes this step. When they approve, the flow <b>advances</b> to the next normal stage.</td><td>Ad-hoc approver is effectively final for this step; flow continues onward.</td></tr>
+      <tr><td><b>Forward &amp; return to me</b></td><td>Tick <b>&ldquo;Return to me after their input&rdquo;</b> in the Forward dialog. The ad-hoc reviewer gives input and clicks <b>Return</b> &mdash; the item comes <b>back to you</b> to make the final call. The flow does <b>not</b> advance on their action.</td><td>You (the originator) decide; ad-hoc is advisory only.</td></tr>
+    </table>
+    <figure><svg viewBox="0 0 900 320" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif"><rect width="900" height="320" fill="#ffffff"/><rect width="900" height="46" fill="#4b5563"/><text x="18" y="29" fill="#fff" font-size="14">Forward for input</text><text x="30" y="82" fill="#6b7280" font-size="13">Forward to</text><rect x="30" y="92" width="360" height="32" fill="#f1f5f9" stroke="#e5e7eb" rx="6"/><text x="42" y="113" fill="#1f2937" font-size="13">jayesh@steelforceco.com</text><rect x="30" y="140" width="22" height="22" rx="4" fill="#0d9488"/><text x="36" y="157" fill="#fff" font-size="15" font-weight="700">&#10003;</text><text x="62" y="157" fill="#0f766e" font-size="14" font-weight="700">Return to me after their input</text><text x="30" y="196" fill="#374151" font-size="12" font-weight="700">Path A — unticked:</text><text x="150" y="196" fill="#6b7280" font-size="12">reviewer approves &#8594; flow moves to next stage.</text><text x="30" y="224" fill="#374151" font-size="12" font-weight="700">Path B — ticked:</text><text x="150" y="224" fill="#6b7280" font-size="12">reviewer clicks Return &#8594; item comes back to you (originator) &#8594; you approve/reject.</text><rect x="30" y="252" width="230" height="40" rx="6" fill="#0f766e"/><text x="70" y="277" fill="#fff" font-size="13" font-weight="600">Forward</text><rect x="272" y="252" width="150" height="40" rx="6" fill="#fff" stroke="#0d9488"/><text x="300" y="277" fill="#0f766e" font-size="13" font-weight="600">&#8617; Return</text><text x="440" y="277" fill="#9ca3af" font-size="12">(Return appears in the ad-hoc reviewer's inbox in Path B)</text></svg><figcaption>Fig 7 &mdash; The Forward dialog. Ticking &ldquo;Return to me&rdquo; makes the ad-hoc reviewer advisory; leaving it unticked hands the step off.</figcaption></figure>
+    <div class="note">Choose per forward &mdash; the same document can be handed off once and returned another time. Both behaviours are always available.</div>
+  </section>
+
+  <section>
+    <h2>Setting this up for a new company</h2>
+    <div class="step"><div class="num">1</div><div>Install the app (<code>bench migrate</code>) &mdash; it creates the <b>Approval Group</b> field on Account &amp; Purchase Invoice, seeds the default groups, and activates routing.</div></div>
+    <div class="step"><div class="num">2</div><div><b>Tag the company's expense accounts</b> with their Approval Group (or tag parent accounts). No numbers, no code.</div></div>
+    <div class="step"><div class="num">3</div><div>Create the position <b>Role Profiles</b> and assign users.</div></div>
+    <div class="step"><div class="num">4</div><div>Adjust any chain in <b>PM Approval Group</b> to match that company's structure &mdash; the workflows rebuild from it. No per-company code.</div></div>
+  </section>
+
+</div>
+
+</div>
+<footer style="max-width:1180px;margin:0 auto;padding:20px;color:#6b7280;font-size:13px">Enfono Technologies &middot; Approval Matrix on PM Workflow &middot; Sheet 1 routes by account, Sheet 2 by transaction type &mdash; both configured by data.</footer>
+<script>
+(function(){
+  var btns=document.querySelectorAll('.tabbtn'), panels=document.querySelectorAll('.panel');
+  function show(id){
+    btns.forEach(function(b){b.classList.toggle('active', b.dataset.tab===id);});
+    panels.forEach(function(p){p.classList.toggle('active', p.id===id);});
+    if(history.replaceState){history.replaceState(null,'','#'+id);}
+    window.scrollTo(0,0);
+  }
+  btns.forEach(function(b){b.addEventListener('click',function(){show(b.dataset.tab);});});
+  var h=(location.hash||'').replace('#','');
+  if(h && document.getElementById(h)){show(h);}
+})();
+</script>
 </body>
 </html>
