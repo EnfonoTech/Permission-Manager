@@ -17,7 +17,8 @@
   "completed_by",
   "user",
   "section_break_qvyg",
-  "permitted_roles"
+  "permitted_roles",
+  "return_to_originator"
  ],
  "fields": [
   {
@@ -121,6 +122,13 @@
    "label": "Permitted Roles",
    "options": "PM Workflow Action Permitted Role",
    "read_only": 1
+  },
+  {
+   "fieldname": "return_to_originator",
+   "fieldtype": "Check",
+   "label": "Return to Originator",
+   "default": "0",
+   "description": "If set on an ad-hoc (forwarded) action, the originator's action re-opens after the ad-hoc approver gives input, instead of the flow advancing."
   }
  ],
  "links": [],

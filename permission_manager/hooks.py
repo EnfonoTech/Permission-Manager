@@ -67,6 +67,8 @@ fixtures = [
                     "Employee-pm_leave_substitute",
                     "Account-custom_approval_group",
                     "Purchase Invoice-custom_approval_group",
+                    "Purchase Order-custom_verbal",
+                    "Purchase Order-custom_verbal_comment",
                 ],
             ]
         ],

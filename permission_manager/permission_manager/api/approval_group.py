@@ -188,6 +188,25 @@ def _build_je(groups):
 	_build("Journal Entry", "Journal Entry Approval", states, tx)
 
 
+def _build_po():
+	"""Purchase Order: Branch Head approves. Send requires a Quotation attachment,
+	UNLESS 'Verbal' is ticked — then the mandatory Verbal Comment stands in and no
+	attachment is required."""
+	VERBAL = "doc.custom_verbal"
+	NOTVERBAL = "not doc.custom_verbal"
+	tx = [
+		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
+		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
+		_t("Pending", "Approve", "Approved", "Branch Head"),
+		_t("Pending", "Reject", "Rejected", "Branch Head", rfc=1, comment=1),
+		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
+		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
+	]
+	states = [_st("Draft", "0", "Purchase User"), _st("Pending", "0", "Branch Head"),
+	          _st("Approved", "1", "Purchase Manager"), _st("Rejected", "0", "Purchase User")]
+	_build("Purchase Order", "Purchase Order Approval", states, tx)
+
+
 def _grant_perms():
 	"""Give every role used in the two workflows the DocType perms it needs, so
 	apply_workflow (which saves/submits AS the acting user) doesn't hit PermissionError."""
@@ -200,7 +219,7 @@ def _grant_perms():
 					return True
 		return False
 
-	for dt in ("Purchase Invoice", "Journal Entry"):
+	for dt in ("Purchase Order", "Purchase Invoice", "Journal Entry"):
 		wf = frappe.db.get_value("PM Workflow", {"document_type": dt}, "name")
 		if not wf:
 			continue
@@ -233,6 +252,7 @@ def rebuild_approval_workflows():
 	Group configs. Safe to call repeatedly (idempotent rebuild)."""
 	groups = _load_groups()
 	_ensure_masters(_max_level(groups) if groups else 2)
+	_build_po()
 	_build_pi(groups)
 	_build_je(groups)
 	_grant_perms()

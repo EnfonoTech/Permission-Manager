@@ -81,7 +81,7 @@ def get_my_pending_approvals() -> dict:
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "assigned_to", "for_submitter", "creation", "priority",
-            "is_adhoc", "adhoc_for",
+            "is_adhoc", "adhoc_for", "return_to_originator",
         ],
     )
     if not actions:
@@ -227,6 +227,7 @@ def get_my_pending_approvals() -> dict:
             "doc_url":           f"/app/{_safe_slug(doctype)}/{docname}",
             "is_adhoc":          bool(act.get("is_adhoc")),
             "adhoc_for":         act.get("adhoc_for") or "",
+            "return_to_originator": bool(act.get("return_to_originator")),
         })
 
     # ── Step 6: sort within each category then group ────────────────────────────

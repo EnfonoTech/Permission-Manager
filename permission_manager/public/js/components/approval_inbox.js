@@ -372,6 +372,12 @@ export class ApprovalInbox {
                 title="${__("Forward to another approver")}">⇢</button>`;
         } else {
             act_html += `<span class="ps-ai-adhoc-badge" title="${__("Ad-hoc approval — forwarded to you")}">${__("Ad-hoc")}</span>`;
+            if (item.return_to_originator) {
+                act_html += `<button class="btn btn-xs btn-default ps-ai-return-btn"
+                    data-name="${esc(item.name)}"
+                    data-docname="${esc(item.docname)}"
+                    title="${__("Return to the original approver with your input (no advance)")}">↩</button>`;
+            }
         }
         act_html += `<a href="${esc(item.doc_url)}" target="_blank"
             class="btn btn-xs btn-default ps-ai-open-btn" title="${__("Open document")}">→</a>`;
@@ -451,6 +457,11 @@ export class ApprovalInbox {
         $row.filter(".ps-ai-row").find(".ps-ai-fwd-btn").on("click", (e) => {
             const $btn = $(e.currentTarget);
             this._do_forward($btn.data("name"), $btn.data("docname"));
+        });
+
+        $row.filter(".ps-ai-row").find(".ps-ai-return-btn").on("click", (e) => {
+            const $btn = $(e.currentTarget);
+            this._do_return($btn.data("name"), $btn.data("docname"));
         });
 
         $tbody.append($row);
@@ -625,6 +636,12 @@ export class ApprovalInbox {
                     label: __("Note"),
                     description: __("Optional reason for forwarding."),
                 },
+                {
+                    fieldtype: "Check",
+                    fieldname: "return_to_originator",
+                    label: __("Return to me after their input"),
+                    description: __("If ticked, the document comes back to you for final approval after the ad-hoc approver responds — instead of the flow advancing to the next stage."),
+                },
             ],
             primary_action_label: __("Forward"),
             primary_action: (vals) => {
@@ -636,11 +653,48 @@ export class ApprovalInbox {
                 frappe.dom.freeze(__("Forwarding…"));
                 frappe.call({
                     method: "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.forward_workflow_action",
-                    args: { action_name, to_user: vals.to_user, comment: vals.comment || "" },
+                    args: { action_name, to_user: vals.to_user, comment: vals.comment || "", return_to_originator: vals.return_to_originator ? 1 : 0 },
                     callback: (r) => {
                         frappe.dom.unfreeze();
                         if (r.message?.adhoc_action) {
                             frappe.show_alert({ message: __("{0} forwarded successfully.", [docname]), indicator: "green" });
+                            this.load();
+                        }
+                    },
+                    error: () => frappe.dom.unfreeze(),
+                });
+            },
+        });
+        dlg.show();
+    }
+
+    // ── Return an ad-hoc action to the originator ──────────────────────────────
+    _do_return(action_name, docname) {
+        const dlg = new frappe.ui.Dialog({
+            title: __("Return: {0}", [docname]),
+            fields: [
+                {
+                    fieldtype: "HTML",
+                    fieldname: "info",
+                    options: `<p class="text-muted small">${__("Send your input back to the original approver for final approval. The workflow does not advance.")}</p>`,
+                },
+                {
+                    fieldtype: "Small Text",
+                    fieldname: "comment",
+                    label: __("Comment / Recommendation"),
+                },
+            ],
+            primary_action_label: __("Return to Originator"),
+            primary_action: (vals) => {
+                dlg.hide();
+                frappe.dom.freeze(__("Returning…"));
+                frappe.call({
+                    method: "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.return_adhoc_to_originator",
+                    args: { action_name, comment: vals.comment || "" },
+                    callback: (r) => {
+                        frappe.dom.unfreeze();
+                        if (r.message) {
+                            frappe.show_alert({ message: __("Returned to the original approver."), indicator: "blue" });
                             this.load();
                         }
                     },
