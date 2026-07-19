@@ -6,8 +6,14 @@ Two pieces:
      its lines (tag accounts with `custom_approval_group`, no account numbers).
   2. Chains as data — each group's approver chain lives in the **PM Approval Group**
      doctype (ordered `stages` of roles). `rebuild_approval_workflows()` regenerates
-     the Purchase Invoice + Journal Entry PM Workflows from those configs, so admins
-     change who approves by editing data — never code or transitions.
+     the Purchase Order, Purchase Invoice, Journal Entry and Payment Entry PM Workflows
+     from those configs, so admins change who approves by editing data — never code.
+
+Routing summary:
+  * Purchase Invoice — by account group (service), currency (local/import), or Asset item.
+  * Purchase Order   — Branch Head, or the Asset chain for fixed-asset POs.
+  * Journal Entry    — by Journal Entry Template.
+  * Payment Entry    — by supplier-payment category (advance / PI payment / due payment).
 """
 
 import frappe
@@ -19,6 +25,24 @@ PI_INITIATE_ROLE = "Purchase User"          # creates + sends the invoice
 PI_LOCAL_ROLE = "Purchase Assistant"        # material, company currency (and returns)
 PI_IMPORT_ROLE = "Purchase Manager"         # material, foreign currency
 JE_INITIATE_ROLE = "Accounts User"          # creates + sends / submits normal JVs
+
+# Fixed-asset PI/PO route through this group (Dept Head → GM → Accountant); seeded
+# as a normal PM Approval Group so the same generic multi-stage engine builds it.
+ASSET_GROUP = "Asset"
+
+# ── Payment Entry (supplier payments) — category-routed ───────────────────────
+PE_INITIATE_ROLE = "Accounts User"          # drafts + sends the payment (accounts doc)
+PE_CHAINS = {
+	"Advance":     ["Purchase Manager", "Finance Manager", "Accountant"],   # advance vs PO
+	"PI Payment":  ["Finance Manager", "Accountant"],                       # against a PI (material or service)
+	"Due Payment": ["HO Accounts", "Finance Manager", "Accountant"],        # on-account supplier settlement
+}
+PE_COND = {
+	"Advance":     'doc.custom_payment_category == "Advance"',
+	# Materials (stock) and Service PI payments share one chain; label kept for reporting.
+	"PI Payment":  '(doc.custom_payment_category == "Materials") or (doc.custom_payment_category == "Service")',
+	"Due Payment": 'doc.custom_payment_category == "Due Payment"',
+}
 
 
 # ═══════════════════════════ stamping ════════════════════════════════════════
@@ -36,20 +60,73 @@ def account_group(account: str) -> str:
 	return ""
 
 
+def _has_asset_group():
+	return frappe.db.exists("PM Approval Group", ASSET_GROUP)
+
+
 def stamp_purchase_invoice(doc, method=None):
-	"""before_save(Purchase Invoice): set custom_approval_group from the first expense
-	line whose account (or an ancestor) carries a group. Empty = normal material."""
+	"""before_save(Purchase Invoice): set custom_approval_group. Fixed-asset lines route
+	via the 'Asset' chain (takes priority); otherwise the first expense line whose account
+	(or an ancestor) carries a group. Empty = normal material."""
 	if not frappe.db.has_column("Account", FIELD):
 		return
 	group = ""
+	# Asset items take priority — Dept Head → GM → Accountant.
 	for item in (doc.get("items") or []):
-		acc = item.get("expense_account")
-		if acc:
-			g = account_group(acc)
-			if g:
-				group = g
-				break
+		if item.get("is_fixed_asset") and _has_asset_group():
+			group = ASSET_GROUP
+			break
+	if not group:
+		for item in (doc.get("items") or []):
+			acc = item.get("expense_account")
+			if acc:
+				g = account_group(acc)
+				if g:
+					group = g
+					break
 	doc.set(FIELD, group)
+
+
+def stamp_purchase_order(doc, method=None):
+	"""before_save(Purchase Order): tag fixed-asset POs with the 'Asset' group so they
+	route Dept Head → GM → Accountant. All other POs stay on the Branch Head flow."""
+	if not frappe.db.has_column("Purchase Order", FIELD):
+		return
+	group = ""
+	for item in (doc.get("items") or []):
+		if item.get("is_fixed_asset") and _has_asset_group():
+			group = ASSET_GROUP
+			break
+	doc.set(FIELD, group)
+
+
+def stamp_payment_entry(doc, method=None):
+	"""before_save(Payment Entry): categorise supplier payments so the workflow routes.
+	  Advance     — pays against a Purchase Order
+	  Materials   — pays against a Purchase Invoice with no approval group (stock)
+	  Service     — pays against a Purchase Invoice that carries an approval group
+	  Due Payment — supplier payment with no reference (on-account settlement)
+	Non-supplier payments (customer receipts, internal transfer) get no category and
+	submit directly — they are never forced through the supplier-approval workflow."""
+	if not frappe.db.has_column("Payment Entry", "custom_payment_category"):
+		return
+	cat = ""
+	if doc.get("payment_type") == "Pay" and doc.get("party_type") == "Supplier":
+		refs = doc.get("references") or []
+		ref_dts = {r.get("reference_doctype") for r in refs if r.get("reference_doctype")}
+		if "Purchase Order" in ref_dts:
+			cat = "Advance"
+		elif "Purchase Invoice" in ref_dts:
+			cat = "Materials"
+			pis = [r.get("reference_name") for r in refs
+			       if r.get("reference_doctype") == "Purchase Invoice" and r.get("reference_name")]
+			if pis and frappe.db.has_column("Purchase Invoice", FIELD):
+				if frappe.get_all("Purchase Invoice",
+				                  filters={"name": ["in", pis], FIELD: ["is", "set"]}, limit=1):
+					cat = "Service"
+		else:
+			cat = "Due Payment"
+	doc.set("custom_payment_category", cat)
 
 
 # ═══════════════════════════ workflow generator ══════════════════════════════
@@ -188,23 +265,62 @@ def _build_je(groups):
 	_build("Journal Entry", "Journal Entry Approval", states, tx)
 
 
-def _build_po():
-	"""Purchase Order: Branch Head approves. Send requires a Quotation attachment,
-	UNLESS 'Verbal' is ticked — then the mandatory Verbal Comment stands in and no
-	attachment is required."""
+def _build_po(groups):
+	"""Purchase Order: normal POs → Branch Head. Send requires a Quotation attachment
+	UNLESS 'Verbal' is ticked (mandatory Verbal Comment stands in). Fixed-asset POs
+	(custom_approval_group == 'Asset') route through the Asset chain instead."""
 	VERBAL = "doc.custom_verbal"
 	NOTVERBAL = "not doc.custom_verbal"
+	NOASSET = "not doc.custom_approval_group"
 	tx = [
 		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
 		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
-		_t("Pending", "Approve", "Approved", "Branch Head"),
-		_t("Pending", "Reject", "Rejected", "Branch Head", rfc=1, comment=1),
+		_t("Pending", "Approve", "Approved", "Branch Head", cond=NOASSET),
+		_t("Pending", "Reject", "Rejected", "Branch Head", cond=NOASSET, rfc=1, comment=1),
 		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
 		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
 	]
+	asset = {k: v for k, v in (groups or {}).items() if k == ASSET_GROUP}
 	states = [_st("Draft", "0", "Purchase User"), _st("Pending", "0", "Branch Head"),
 	          _st("Approved", "1", "Purchase Manager"), _st("Rejected", "0", "Purchase User")]
+	if asset:
+		maxl = _max_level(asset)
+		tx += _group_stage_transitions(
+			asset, lambda g, c: "doc.custom_approval_group == %r" % g,
+			"Pending", ["Pending Accounts"] + ["Pending L%d" % k for k in range(3, maxl + 1)])
+		states.append(_st("Pending Accounts", "0", "Accountant"))
+		for k in range(3, maxl + 1):
+			states.append(_st("Pending L%d" % k, "0", "Accountant"))
 	_build("Purchase Order", "Purchase Order Approval", states, tx)
+
+
+def _build_payment_entry():
+	"""Payment Entry: supplier payments route by category (stamped on custom_payment_category).
+	Non-supplier payments (no category) submit directly, so customer receipts / internal
+	transfers are never dragged through the supplier-approval flow."""
+	pe_groups = {
+		k: {"stages": [{"approver_role": r, "require_attachment": 0, "require_comment": 0} for r in chain],
+		    "templates": []}
+		for k, chain in PE_CHAINS.items()
+	}
+	maxl = _max_level(pe_groups)
+	CAT = "doc.custom_payment_category"          # truthy → a supplier category was stamped
+	NOCAT = "not doc.custom_payment_category"     # receipts / internal / uncategorised
+	tx = [
+		_t("Draft", "Submit", "Approved", PE_INITIATE_ROLE, cond=NOCAT, self_appr=1),
+		_t("Draft", "Send for Approval", "Pending", PE_INITIATE_ROLE, cond=CAT, self_appr=1, attach=1),
+	]
+	tx += _group_stage_transitions(
+		pe_groups, lambda g, c: PE_COND[g],
+		"Pending", ["Pending Accounts"] + ["Pending L%d" % k for k in range(3, maxl + 1)])
+	tx.append(_t("Rejected", "Submit", "Approved", PE_INITIATE_ROLE, cond=NOCAT, self_appr=1))
+	tx.append(_t("Rejected", "Send for Approval", "Pending", PE_INITIATE_ROLE, cond=CAT, self_appr=1, attach=1))
+	states = [_st("Draft", "0", PE_INITIATE_ROLE), _st("Pending", "0", "Finance Manager"),
+	          _st("Pending Accounts", "0", "Accountant"),
+	          _st("Approved", "1", "Accountant"), _st("Rejected", "0", PE_INITIATE_ROLE)]
+	for k in range(3, maxl + 1):
+		states.append(_st("Pending L%d" % k, "0", "Accountant"))
+	_build("Payment Entry", "Payment Entry Approval", states, tx)
 
 
 def _grant_perms():
@@ -219,7 +335,7 @@ def _grant_perms():
 					return True
 		return False
 
-	for dt in ("Purchase Order", "Purchase Invoice", "Journal Entry"):
+	for dt in ("Purchase Order", "Purchase Invoice", "Journal Entry", "Payment Entry"):
 		wf = frappe.db.get_value("PM Workflow", {"document_type": dt}, "name")
 		if not wf:
 			continue
@@ -251,10 +367,13 @@ def rebuild_approval_workflows():
 	"""Regenerate the Purchase Invoice + Journal Entry PM Workflows from PM Approval
 	Group configs. Safe to call repeatedly (idempotent rebuild)."""
 	groups = _load_groups()
-	_ensure_masters(_max_level(groups) if groups else 2)
-	_build_po()
+	# Payment Entry chains are up to 3 deep, so ensure Pending L3 masters exist even
+	# when no account group reaches level 3.
+	_ensure_masters(max(_max_level(groups) if groups else 2, 3))
+	_build_po(groups)
 	_build_pi(groups)
 	_build_je(groups)
+	_build_payment_entry()
 	_grant_perms()
 	frappe.db.commit()
 	frappe.clear_cache()

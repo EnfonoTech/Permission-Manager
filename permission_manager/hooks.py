@@ -69,9 +69,15 @@ fixtures = [
                     "Purchase Invoice-custom_approval_group",
                     "Purchase Order-custom_verbal",
                     "Purchase Order-custom_verbal_comment",
+                    "Purchase Order-custom_approval_group",
+                    "Payment Entry-custom_payment_category",
                 ],
             ]
         ],
+    },
+    {
+        "doctype": "Notification",
+        "filters": [["name", "in", ["PDC Cheque Date Reminder"]]],
     },
 ]
 
@@ -110,6 +116,14 @@ doc_events = {
     # expense account (tag accounts, not numbers). Read by PM Workflow conditions.
     "Purchase Invoice": {
         "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_purchase_invoice",
+    },
+    # Tag fixed-asset POs with the Asset group so they route Dept Head → GM → Accountant.
+    "Purchase Order": {
+        "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_purchase_order",
+    },
+    # Categorise supplier payments (advance / PI payment / due) for the Payment Entry workflow.
+    "Payment Entry": {
+        "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_payment_entry",
     },
     # PM Workflow engine — fires on every doctype
     "*": {
