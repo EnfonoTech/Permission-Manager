@@ -176,6 +176,34 @@ def _enrich_mrs(mr_list: list) -> list:
     return mr_list
 
 
+def _ses_with_cancelled_mr(se_names: list) -> set:
+    """
+    Stock Entry names whose linked Material Request(s) are ALL cancelled
+    (docstatus 2). A Material Transfer raised against an MR that was later
+    cancelled must not sit in an approver's queue — approving it would fulfil
+    a dead request. Stock Entries with no MR link, or with at least one live
+    linked MR, stay visible.
+    """
+    if not se_names:
+        return set()
+    rows = frappe.db.sql(
+        """
+        SELECT sed.parent AS se, mr.docstatus AS mr_docstatus
+        FROM   `tabStock Entry Detail` sed
+        JOIN   `tabMaterial Request` mr ON mr.name = sed.material_request
+        WHERE  sed.parent IN %(names)s
+          AND  sed.material_request IS NOT NULL
+          AND  sed.material_request != ''
+        """,
+        {"names": se_names},
+        as_dict=True,
+    )
+    by_se: dict = {}
+    for r in rows:
+        by_se.setdefault(r.se, []).append(r.mr_docstatus)
+    return {se for se, st in by_se.items() if st and all(s == 2 for s in st)}
+
+
 def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: bool = False) -> list:
     """
     Open PM Workflow Actions for Stock Entry Material Transfer scoped to the
@@ -203,6 +231,7 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
 
     # Fetch current SE state + header warehouse in one round-trip
     se_names = list({a.reference_name for a in actions})
+    cancelled_mr_ses = _ses_with_cancelled_mr(se_names)
     se_info: dict = {}
     for se in frappe.db.get_all(
         "Stock Entry",
@@ -248,6 +277,7 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
         a for a in actions
         if se_info.get(a.reference_name)
         and se_info[a.reference_name].docstatus != 2
+        and a.reference_name not in cancelled_mr_ses
         and (
             not se_info[a.reference_name].workflow_state
             or se_info[a.reference_name].workflow_state == a.workflow_state
