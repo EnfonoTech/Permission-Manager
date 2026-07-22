@@ -77,7 +77,9 @@ def get_my_pending_approvals() -> dict:
     # ── Step 1: all open actions ───────────────────────────────────────────────
     actions = frappe.get_all(
         "PM Workflow Action",
-        filters={"status": "Open"},
+        # Stock Entry approvals are shown ONLY in the Warehouse Dashboard,
+        # not this general inbox (per ops request 2026-07-22).
+        filters={"status": "Open", "reference_doctype": ["!=", "Stock Entry"]},
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "assigned_to", "for_submitter", "creation", "priority",
