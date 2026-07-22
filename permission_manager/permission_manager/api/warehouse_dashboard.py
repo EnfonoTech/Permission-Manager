@@ -23,7 +23,7 @@ def get_warehouse_dashboard_data() -> dict:
         pluck="for_value",
     )
 
-    is_manager = "System Manager" in roles
+    is_manager = ("System Manager" in roles) or user == "Administrator"
 
     mr_to_fulfill     = _get_mr_to_fulfill(warehouses, is_manager)
     my_mrs            = _get_my_mrs(user, is_manager)

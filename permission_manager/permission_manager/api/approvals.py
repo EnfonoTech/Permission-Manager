@@ -141,11 +141,19 @@ def get_my_pending_approvals() -> dict:
 
     # ── Step 3: filter to actions I can act on ─────────────────────────────────
     my_actions = []
+    is_admin = user == "Administrator"
     for act in actions:
         role_id = ""
         is_mine = False
 
-        if act.assigned_to == user:
+        if is_admin:
+            # Administrator is an unrestricted super-viewer: every open action is theirs.
+            is_mine = True
+            role_id = next(
+                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                "Administrator",
+            )
+        elif act.assigned_to == user:
             is_mine = True
             # Prefer the role name over "Direct" for display — the action may have been
             # pinned to this user via warehouse-permission resolution but still belongs to
