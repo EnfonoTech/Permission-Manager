@@ -364,6 +364,22 @@ def get_allowed_transitions_for_user(
         order_by="idx asc",
     )
     user_roles = frappe.get_roles(user)
+
+    # Ad-hoc (forwarded) approver: authority comes from the direct assignment,
+    # not from a role. If this user holds an Open ad-hoc action for this doc at
+    # the current state, let them perform any transition from the state
+    # (role/matrix bypassed); doc-based conditions are still enforced by the
+    # caller via is_transition_condition_satisfied.
+    if doc is not None and doc.get("name") and frappe.db.exists("PM Workflow Action", {
+        "reference_doctype": doc.get("doctype"),
+        "reference_name": doc.get("name"),
+        "workflow_state": current_state,
+        "assigned_to": user,
+        "is_adhoc": 1,
+        "status": "Open",
+    }):
+        return transitions
+
     allowed = []
 
     doc_owner = get_original_submitter(doc) if doc else None
