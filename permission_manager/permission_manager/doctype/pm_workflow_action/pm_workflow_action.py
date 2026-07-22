@@ -754,6 +754,24 @@ def get_state_optional_field_value(workflow_name, state):
     )
 
 
+def _can_act_on(action, user):
+    """True if `user` may act on this workflow action: the specifically-assigned
+    user, a System Manager, or — for role-based (unassigned) actions — a user who
+    holds one of the action's permitted roles / is a permitted user."""
+    if user == "Administrator" or "System Manager" in frappe.get_roles(user):
+        return True
+    assigned = action.get("assigned_to")
+    if assigned:
+        return assigned == user
+    roles = set(frappe.get_roles(user))
+    for r in (action.get("permitted_roles") or []):
+        if r.approver_type == "Role" and r.approver in roles:
+            return True
+        if r.approver_type == "User" and r.approver == user:
+            return True
+    return False
+
+
 @frappe.whitelist()
 def forward_workflow_action(action_name, to_user, comment="", return_to_originator=0):
     """Forward an open PM Workflow Action to another user as an ad-hoc approver.
@@ -764,8 +782,8 @@ def forward_workflow_action(action_name, to_user, comment="", return_to_originat
     """
     action = frappe.get_doc("PM Workflow Action", action_name)
 
-    # Only the assigned user (or system manager) can forward
-    if action.assigned_to != frappe.session.user and "System Manager" not in frappe.get_roles():
+    # The assigned user, a permitted-role approver, or a system manager can forward
+    if not _can_act_on(action, frappe.session.user):
         frappe.throw(_("You can only forward actions assigned to you."), frappe.PermissionError)
 
     if action.status != "Open":
@@ -845,7 +863,7 @@ def return_adhoc_to_originator(action_name, comment=""):
     action = frappe.get_doc("PM Workflow Action", action_name)
     if not action.is_adhoc or not action.adhoc_for:
         frappe.throw(_("This is not an ad-hoc action."))
-    if action.assigned_to != frappe.session.user and "System Manager" not in frappe.get_roles():
+    if not _can_act_on(action, frappe.session.user):
         frappe.throw(_("You can only act on actions assigned to you."), frappe.PermissionError)
     if action.status != "Open":
         frappe.throw(_("This action is no longer open."))
