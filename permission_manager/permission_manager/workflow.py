@@ -339,6 +339,11 @@ def get_transitions(
     transitions = get_allowed_transitions_for_user(
         workflow_doc.name, current_state, frappe.session.user, doc
     )
+    # Administrator is unrestricted: don't gate on transition conditions
+    # (e.g. the warehouse-User-Permission checks on Stock Entry accept/reject),
+    # so admin can see and act on every pending document.
+    if frappe.session.user == "Administrator":
+        return transitions
     return [t for t in transitions if is_transition_condition_satisfied(t, doc)]
 
 
@@ -364,6 +369,10 @@ def get_allowed_transitions_for_user(
         order_by="idx asc",
     )
     user_roles = frappe.get_roles(user)
+
+    # Administrator is unrestricted — may perform any transition from the state.
+    if user == "Administrator":
+        return transitions
 
     # Ad-hoc (forwarded) approver: authority comes from the direct assignment,
     # not from a role. If this user holds an Open ad-hoc action for this doc at

@@ -302,7 +302,14 @@ def _get_pending_approvals(user: str, roles: set, warehouses: list, is_manager: 
         is_mine    = False
         role_label = ""
 
-        if act.assigned_to == user:
+        if is_manager:
+            # Managers / Administrator see every pending approval (no role gate).
+            is_mine    = True
+            role_label = next(
+                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                "Manager",
+            )
+        elif act.assigned_to == user:
             is_mine    = True
             role_label = next(
                 (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
