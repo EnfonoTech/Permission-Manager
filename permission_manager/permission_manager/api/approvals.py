@@ -49,6 +49,38 @@ def _safe_slug(doctype: str) -> str:
     return doctype.lower().replace(" ", "-")
 
 
+def _only_pending_docs(actions: list) -> list:
+    """Keep only actions whose reference document is still a draft (docstatus 0).
+
+    Submitted (1) or cancelled (2) documents cannot accept a further pending-state
+    workflow action, so listing them in the approval inbox only confuses approvers
+    and any apply attempt fails with
+    "Workflow state '...' is incompatible with document status". A reference
+    document that no longer exists (hard-deleted) is dropped too. On an unexpected
+    query error we fail OPEN (keep the action) so a transient hiccup never hides a
+    genuinely-pending approval."""
+    if not actions:
+        return actions
+    by_dt: dict = {}
+    for a in actions:
+        if a.reference_doctype and a.reference_name:
+            by_dt.setdefault(a.reference_doctype, set()).add(a.reference_name)
+    draft_docs: set = set()
+    for dt, names in by_dt.items():
+        try:
+            rows = frappe.get_all(dt, filters={"name": ["in", list(names)]},
+                                  fields=["name", "docstatus"])
+            for r in rows:
+                if r.docstatus == 0:
+                    draft_docs.add((dt, r.name))
+        except Exception:
+            frappe.clear_last_message()
+            for n in names:            # fail open — cannot verify, keep it
+                draft_docs.add((dt, n))
+    return [a for a in actions
+            if (a.reference_doctype, a.reference_name) in draft_docs]
+
+
 # ─── Main API ─────────────────────────────────────────────────────────────────
 
 @frappe.whitelist()
@@ -86,6 +118,14 @@ def get_my_pending_approvals() -> dict:
             "is_adhoc", "adhoc_for", "return_to_originator",
         ],
     )
+    if not actions:
+        return {"groups": [], "total": 0}
+
+    # Drop actions whose reference document is already submitted (docstatus 1)
+    # or cancelled (2): they cannot accept a pending-state workflow action and
+    # only confuse approvers (apply errors "Workflow state incompatible with
+    # document status"). Only draft (docstatus 0) documents remain.
+    actions = _only_pending_docs(actions)
     if not actions:
         return {"groups": [], "total": 0}
 
