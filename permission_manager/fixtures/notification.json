@@ -134,7 +134,7 @@
   "enabled": 1,
   "event": "Save",
   "is_standard": 0,
-  "message": "Dear {{ doc.expense_approver or \"Sir/Mam\" }},<br>\n\n<p>An expense claim from <b>{{ doc.employee_name }}</b> has been forwarded for your approval.</p>\n\n<p><b>Total Amount:</b> ₹{{ doc.total_claimed_amount }}</p>\n\n<hr>\n<h4>Expense Details:</h4>\n<table border=\"1\" cellpadding=\"5\" cellspacing=\"0\" style=\"border-collapse: collapse; width: 100%;\">\n    <thead>\n        <tr>\n            <th style=\"text-align: left;\">Expense Type</th>\n            <th style=\"text-align: left;\">Description</th>\n            <th style=\"text-align: right;\">Amount (₹)</th>\n        </tr>\n    </thead>\n    <tbody>\n        {% for row in doc.expenses %}\n        <tr>\n            <td>{{ row.expense_type or '' }}</td>\n            <td>{{ row.description or '' }}</td>\n            <td style=\"text-align: right;\">{{ row.amount or 0 }}</td>\n        </tr>\n        {% endfor %}\n    </tbody>\n</table>\n\n<hr>\n\n<p>You can review and take action by clicking the link below:</p>\n<p><a href=\"{{ frappe.utils.get_url() }}/app/expense-claim/{{ doc.name }}\">Open Expense Claim</a></p>\n",
+  "message": "Dear {{ doc.expense_approver or \"Sir/Mam\" }},<br>\n\n<p>An expense claim from <b>{{ doc.employee_name }}</b> has been forwarded for your approval.</p>\n\n<p><b>Total Amount:</b> \u20b9{{ doc.total_claimed_amount }}</p>\n\n<hr>\n<h4>Expense Details:</h4>\n<table border=\"1\" cellpadding=\"5\" cellspacing=\"0\" style=\"border-collapse: collapse; width: 100%;\">\n    <thead>\n        <tr>\n            <th style=\"text-align: left;\">Expense Type</th>\n            <th style=\"text-align: left;\">Description</th>\n            <th style=\"text-align: right;\">Amount (\u20b9)</th>\n        </tr>\n    </thead>\n    <tbody>\n        {% for row in doc.expenses %}\n        <tr>\n            <td>{{ row.expense_type or '' }}</td>\n            <td>{{ row.description or '' }}</td>\n            <td style=\"text-align: right;\">{{ row.amount or 0 }}</td>\n        </tr>\n        {% endfor %}\n    </tbody>\n</table>\n\n<hr>\n\n<p>You can review and take action by clicking the link below:</p>\n<p><a href=\"{{ frappe.utils.get_url() }}/app/expense-claim/{{ doc.name }}\">Open Expense Claim</a></p>\n",
   "message_type": "Markdown",
   "method": null,
   "modified": "2025-07-06 11:44:59.007087",
@@ -243,6 +243,49 @@
   "set_property_after_alert": null,
   "slack_webhook_url": null,
   "subject": "Your Expense Claim has been {{ doc.status }}",
+  "value_changed": null
+ },
+ {
+  "attach_files": "",
+  "attach_print": 0,
+  "channel": "System Notification",
+  "condition": "doc.docstatus == 1 and doc.reference_no and doc.custom_zatca_payment_means_code == '20'",
+  "date_changed": "reference_date",
+  "days_in_advance": 3,
+  "docstatus": 0,
+  "doctype": "Notification",
+  "document_type": "Payment Entry",
+  "enabled": 1,
+  "event": "Days Before",
+  "from_attach_field": null,
+  "is_standard": 0,
+  "message": "<b>Post-Dated Cheque due today</b><br>\nPayment Entry: {{ doc.name }}<br>\nParty: {{ doc.party_name or doc.party }} ({{ doc.party_type }})<br>\nCheque / Ref No: {{ doc.reference_no }}<br>\nCheque Date: {{ doc.reference_date }}<br>\nMode of Payment: {{ doc.mode_of_payment }}<br>\nPaid Amount: {{ doc.paid_amount }} &nbsp; Received Amount: {{ doc.received_amount }}<br>\nCompany: {{ doc.company }}",
+  "message_type": "Markdown",
+  "method": null,
+  "modified": "2026-07-25 14:50:51.665863",
+  "module": null,
+  "name": "PDC Cheque Date Reminder",
+  "print_format": null,
+  "property_value": null,
+  "recipients": [
+   {
+    "bcc": null,
+    "cc": null,
+    "condition": null,
+    "parent": "PDC Cheque Date Reminder",
+    "parentfield": "recipients",
+    "parenttype": "Notification",
+    "receiver_by_document_field": null,
+    "receiver_by_role": "Accountant"
+   }
+  ],
+  "send_system_notification": 1,
+  "send_to_all_assignees": 0,
+  "sender": null,
+  "sender_email": null,
+  "set_property_after_alert": null,
+  "slack_webhook_url": null,
+  "subject": "PDC due today: {{ doc.name }} - {{ doc.party_name or doc.party }}",
   "value_changed": null
  }
 ]
