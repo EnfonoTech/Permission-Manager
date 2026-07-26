@@ -53,8 +53,14 @@ class TestMaterialRequestTransfers(FrappeTestCase):
 
 	def setUp(self):
 		self.mr = self._material_request(qty=100)
+		self._extra_entries = []
 
 	def tearDown(self):
+		for name in self._extra_entries:
+			doc = frappe.get_doc("Stock Entry", name)
+			if doc.docstatus == 1:
+				doc.cancel()
+			doc.delete(force=True)
 		for se in frappe.get_all("Stock Entry Detail", filters={"material_request": self.mr.name},
 		                         pluck="parent", distinct=True):
 			doc = frappe.get_doc("Stock Entry", se)
@@ -93,6 +99,20 @@ class TestMaterialRequestTransfers(FrappeTestCase):
 			           "allow_zero_valuation_rate": 1}],
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()
+		return se
+
+	def _receive_stock(self, qty):
+		"""Put real stock in the source warehouse so a transfer can actually be submitted."""
+		se = frappe.get_doc({
+			"doctype": "Stock Entry", "stock_entry_type": "Material Receipt",
+			"purpose": "Material Receipt", "company": self.company, "posting_date": today(),
+			"to_warehouse": self.src,
+			"items": [{"item_code": ITEM, "qty": qty, "t_warehouse": self.src,
+			           "basic_rate": 1, "allow_zero_valuation_rate": 1}],
+		}).insert(ignore_permissions=True)
+		se.submit()
+		frappe.db.commit()
+		self._extra_entries.append(se.name)
 		return se
 
 	# ── the verdicts ──────────────────────────────────────────────────────────
@@ -146,6 +166,7 @@ class TestMaterialRequestTransfers(FrappeTestCase):
 		self.assertEqual(self.mr.status, "Pending")
 
 	def test_cancelled_transfer_does_not_count(self):
+		self._receive_stock(100)          # submitting a transfer needs stock to move
 		se = self._draft_transfer(100)
 		se.submit()
 		se.cancel()
