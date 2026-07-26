@@ -85,9 +85,12 @@ class TestMaterialRequestTransfers(FrappeTestCase):
 			"doctype": "Stock Entry", "stock_entry_type": "Material Transfer",
 			"purpose": "Material Transfer", "company": self.company, "posting_date": today(),
 			"from_warehouse": self.src, "to_warehouse": self.dst,
+			# the test item has never been received anywhere, so ERPNext has no valuation rate
+			# to work from and refuses the entry; the quantities are what these tests care about
 			"items": [{"item_code": ITEM, "qty": qty, "s_warehouse": self.src,
 			           "t_warehouse": self.dst, "material_request": self.mr.name,
-			           "material_request_item": row.name, "basic_rate": 1}],
+			           "material_request_item": row.name, "basic_rate": 1,
+			           "allow_zero_valuation_rate": 1}],
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()
 		return se
