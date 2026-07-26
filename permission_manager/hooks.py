@@ -44,6 +44,10 @@ doctype_js = {
     "Leave Application": "public/js/leave_application.js",
     "Expense Claim":     "public/js/expense_claim.js",
     "PM Workflow":       "public/js/pm_workflow_form.js",
+    # ERPNext counts only submitted Stock Entries towards a Material Request, so a transfer
+    # parked in a PM Workflow state leaves the request reading Pending / 0% and invites a
+    # duplicate. This warns on the request itself.
+    "Material Request":  "public/js/material_request_transfer_warning.js",
 }
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────

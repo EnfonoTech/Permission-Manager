@@ -225,6 +225,54 @@ function _draw(page) {
         + frappe.datetime.str_to_user(frappe.datetime.get_today()) + "</span></div>";
     html += "</div>";
 
+    // ── Duplicate transfers (Administrator only) ──────────────────────
+    // Sits above the KPIs on purpose: it explains a Pending Approvals count of zero, so it has
+    // to be read before that zero is. Only the Administrator gets it — they are the one who can
+    // delete the extra Stock Entries.
+    var dupes = _active_wh
+        ? (d.duplicate_transfers || []).filter(function (t) {
+              return (t.stock_entries || []).some(function (se) {
+                  return !se.to_warehouse || se.to_warehouse === _active_wh;
+              });
+          })
+        : (d.duplicate_transfers || []);
+
+    if (dupes.length) {
+        html += '<div class="wh-dup-banner">';
+        html += '<div class="wh-dup-hdr">' + frappe.utils.icon("solid-warning", "sm") + " "
+            + __("{0} request(s) with more transferred than requested", [dupes.length])
+            + '<span class="wh-dup-sub">'
+            + __("Approvals for these are hidden until the extra transfers are cancelled")
+            + "</span></div>";
+
+        dupes.forEach(function (t) {
+            var tot = t.totals || {};
+            html += '<div class="wh-dup-mr">';
+            html += '<div class="wh-dup-mr-top">';
+            html += '<a href="/app/material-request/' + encodeURIComponent(t.material_request) + '">'
+                + e(t.material_request) + "</a>";
+            html += '<span class="wh-dup-nums">'
+                + __("requested {0} · transferred {1} · {2} line(s) over", [
+                      format_number(tot.requested, null, 2),
+                      format_number((tot.submitted || 0) + (tot.pending || 0), null, 2),
+                      t.over_lines,
+                  ])
+                + "</span>";
+            html += "</div>";
+
+            (t.stock_entries || []).forEach(function (se) {
+                var state = se.docstatus === 1 ? __("Submitted") : (se.workflow_state || __("Draft"));
+                html += '<div class="wh-dup-se">'
+                    + '<a href="/app/stock-entry/' + encodeURIComponent(se.name) + '">' + e(se.name) + "</a>"
+                    + '<span class="wh-dup-se-state">' + e(state) + "</span>"
+                    + '<span class="wh-dup-se-qty">' + format_number(se.qty, null, 2) + "</span>"
+                    + "</div>";
+            });
+            html += "</div>";
+        });
+        html += "</div>";
+    }
+
     // ── KPI row ───────────────────────────────────────────────────────
     html += '<div class="wh-kpi-row">';
     html += _kpi("📋", mr_fulfill.length,             __("To Fulfil"),         "fulfil");
@@ -549,6 +597,22 @@ function _inject_css() {
 .wh-date { font-size: 11px; color: var(--text-muted); background: var(--control-bg);
     padding: 4px 10px; border-radius: 20px; white-space: nowrap; }
 
+/* ── Duplicate transfer banner (admin) ── */
+.wh-dup-banner { border: 1px solid var(--border-color); border-left: 3px solid #BA7517;
+    border-radius: 0; background: var(--card-bg); padding: 12px 14px; margin-bottom: 16px; }
+.wh-dup-hdr { font-size: 13px; font-weight: 700; color: #854F0B;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wh-dup-sub { flex: 1 1 100%; font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.wh-dup-mr { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border-color);
+    border-radius: 8px; background: var(--control-bg); }
+.wh-dup-mr-top { display: flex; justify-content: space-between; align-items: baseline;
+    flex-wrap: wrap; gap: 6px; font-size: 12px; font-weight: 600; }
+.wh-dup-nums { font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.wh-dup-se { display: flex; align-items: center; gap: 10px; font-size: 11px;
+    padding: 3px 0; border-top: 1px solid var(--border-color); margin-top: 4px; }
+.wh-dup-se-state { color: var(--text-muted); }
+.wh-dup-se-qty { margin-left: auto; color: var(--text-color); }
+
 /* ── KPI Cards ────────────────────────── */
 .wh-kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
 .wh-kpi-card { background: var(--card-bg); border: 1px solid var(--border-color);
@@ -764,6 +828,7 @@ function _inject_css() {
     .wh-dash { padding: 12px; }
     .wh-kpi-value { font-size: 24px; }
     .wh-header { flex-direction: column; gap: 8px; }
+    .wh-dup-mr-top { flex-direction: column; }
     .wh-row { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
     .wh-row-meta { grid-column: 1; grid-row: 3; flex-direction: row; flex-wrap: wrap;
         align-items: center; justify-content: flex-start; }

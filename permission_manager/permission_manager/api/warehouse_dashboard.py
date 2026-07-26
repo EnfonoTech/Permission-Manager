@@ -29,6 +29,8 @@ def get_warehouse_dashboard_data() -> dict:
     my_mrs            = _get_my_mrs(user, is_manager)
     pending_approvals = _get_pending_approvals(user, roles, warehouses, is_manager)
 
+    duplicate_transfers = _duplicate_transfer_report() if user == "Administrator" else []
+
     transferred_today = frappe.db.count(
         "Stock Entry",
         filters={
@@ -45,16 +47,75 @@ def get_warehouse_dashboard_data() -> dict:
         "mr_to_fulfill": mr_to_fulfill,
         "my_mrs": my_mrs,
         "pending_approvals": pending_approvals,
+        # Administrator only, by request: the person who can actually delete the extra transfers
+        # is the one told about them. Everyone else just sees the affected MR hidden from the
+        # approvals queue, and gets warned on the Material Request itself before raising another.
+        "duplicate_transfers": duplicate_transfers,
         "kpis": {
             "mr_to_fulfill_count": len(mr_to_fulfill),
             "my_mr_count": len(my_mrs),
             "pending_approval_count": len(pending_approvals),
             "transferred_today": transferred_today,
+            "duplicate_transfer_count": len(duplicate_transfers),
         },
     }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _duplicate_transfer_report(limit: int = 20) -> list:
+    """Material Requests carrying more transferred quantity than was requested.
+
+    The same condition `_get_pending_approvals` uses to hide an MR's approvals, but reported
+    instead of silently applied — hiding them is what made Steel Force\'s five duplicate
+    transfers against MAT-MR-2026-00156-1 look like a broken dashboard rather than a data
+    problem. Per-MR detail comes from the Material Request module so the dashboard and the
+    Material Request form always tell the same story.
+    """
+    over = frappe.db.sql(
+        """
+        SELECT   mri.parent AS mr, COUNT(*) AS over_lines
+        FROM     `tabMaterial Request Item` mri
+        JOIN     (SELECT material_request_item, SUM(transfer_qty) AS moved
+                  FROM   `tabStock Entry Detail`
+                  WHERE  docstatus < 2
+                    AND  material_request_item IS NOT NULL
+                    AND  material_request_item != \'\'
+                  GROUP BY material_request_item) sed
+                 ON sed.material_request_item = mri.name
+        WHERE    sed.moved > mri.stock_qty + 0.001
+        GROUP BY mri.parent
+        ORDER BY over_lines DESC
+        LIMIT    %(limit)s
+        """,
+        {"limit": limit},
+        as_dict=True,
+    )
+    if not over:
+        return []
+
+    from permission_manager.permission_manager.api.material_request_transfers import (
+        get_transfer_summary,
+    )
+
+    report = []
+    for row in over:
+        try:
+            summary = get_transfer_summary(row.mr)
+        except Exception:
+            frappe.clear_last_message()
+            continue
+        if not summary.get("stock_entries"):
+            continue
+        report.append({
+            "material_request": row.mr,
+            "over_lines": row.over_lines,
+            "status": summary.get("status"),
+            "totals": summary.get("totals"),
+            "stock_entries": summary.get("stock_entries"),
+        })
+    return report
+
 
 def _get_mr_to_fulfill(warehouses: list, is_manager: bool = False) -> list:
     """
