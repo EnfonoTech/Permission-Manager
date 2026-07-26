@@ -238,12 +238,13 @@ function _draw(page) {
         : (d.duplicate_transfers || []);
 
     if (dupes.length) {
-        html += '<div class="wh-dup-banner">';
-        html += '<div class="wh-dup-hdr">' + frappe.utils.icon("solid-warning", "sm") + " "
+        // Collapsed by default: it is a cleanup queue, not something to read every visit.
+        html += '<details class="wh-dup-banner">';
+        html += '<summary class="wh-dup-hdr">' + frappe.utils.icon("solid-warning", "sm") + " "
             + __("{0} request(s) with more transferred than requested", [dupes.length])
             + '<span class="wh-dup-sub">'
             + __("Approvals for these are hidden until the extra transfers are cancelled")
-            + "</span></div>";
+            + "</span></summary>";
 
         dupes.forEach(function (t) {
             var tot = t.totals || {};
@@ -270,7 +271,7 @@ function _draw(page) {
             });
             html += "</div>";
         });
-        html += "</div>";
+        html += "</details>";
     }
 
     // ── KPI row ───────────────────────────────────────────────────────
@@ -601,7 +602,11 @@ function _inject_css() {
 .wh-dup-banner { border: 1px solid var(--border-color); border-left: 3px solid #BA7517;
     border-radius: 0; background: var(--card-bg); padding: 12px 14px; margin-bottom: 16px; }
 .wh-dup-hdr { font-size: 13px; font-weight: 700; color: #854F0B;
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; cursor: pointer; }
+.wh-dup-hdr::-webkit-details-marker { display: none; }
+.wh-dup-hdr::marker { content: ""; }
+.wh-dup-hdr::after { content: "▾"; margin-left: auto; font-size: 11px; opacity: .7; }
+details[open] > .wh-dup-hdr::after { content: "▴"; }
 .wh-dup-sub { flex: 1 1 100%; font-size: 11px; font-weight: 400; color: var(--text-muted); }
 .wh-dup-mr { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border-color);
     border-radius: 8px; background: var(--control-bg); }
