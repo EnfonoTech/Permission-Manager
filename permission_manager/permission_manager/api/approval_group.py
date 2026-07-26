@@ -220,13 +220,16 @@ def _carry_over_manual_rows(existing, states, transitions):
 	                     fields=["*"], order_by="idx asc")
 	generated = {_signature(t) for t in transitions}
 
-	kept, dropped = [], []
+	kept, dropped, seen = [], [], set()
 	for row in old:
 		if cint(row.get("is_generated")):
 			continue                       # config owns this row; the fresh generation replaces it
 		if _signature(row) in generated:
 			continue                       # identical to a row just generated: an unstamped legacy
 			                               # copy, and re-adding it would duplicate the action
+		if _signature(row) in seen:
+			continue                       # the same hand-added route twice over; carry it once
+		seen.add(_signature(row))
 		# a row naming a role that no longer exists cannot be re-inserted
 		if row.get("approver_type") == "Role" and row.get("allowed") \
 				and not frappe.db.exists("Role", row.get("allowed")):

@@ -158,6 +158,18 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 		self.assertEqual(len(approvals), 1, "legacy copy of a generated row was duplicated")
 		self.assertEqual(len(rows), 2)
 
+	def test_the_same_hand_added_route_twice_is_carried_once(self):
+		row = _manual("Draft", "Send for Approval", "Pending", "Accounts User", cond="doc.description")
+		self._add_manual(row)
+		self._add_manual(row)
+
+		_build(TARGET, WF, self.states, self.generated)
+
+		matches = frappe.get_all("PM Workflow Transition",
+		                         filters={"parent": WF, "allowed": "Accounts User",
+		                                  "action": "Send for Approval"})
+		self.assertEqual(len(matches), 1, "duplicate hand-added rows accumulated across rebuilds")
+
 	def test_row_for_deleted_role_is_dropped_not_fatal(self):
 		self._add_manual(_manual("Draft", "Send for Approval", "Pending", "No Such Role Here"),
 		                 ignore_links=True)
