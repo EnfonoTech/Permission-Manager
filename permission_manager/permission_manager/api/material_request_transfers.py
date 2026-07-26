@@ -27,6 +27,33 @@ COVERED = "covered"     # every line is accounted for — another transfer would
 OVER = "over"           # more than requested is already in flight — something is wrong
 
 
+HEADLINES = {
+    NONE: "No transfer raised yet",
+    PARTIAL: "Partially transferred — a further transfer covers the remainder",
+    COVERED: "Already fully transferred — do not raise another",
+    OVER: "More has been transferred than requested",
+}
+
+
+def _empty(material_request: str = None, status: str = None) -> dict:
+    """Nothing to warn about, in the same shape as a real answer.
+
+    Every caller gets the same keys whichever branch it took — an early return that dropped
+    `totals` and `headline` broke a caller that read them unconditionally.
+    """
+    return {
+        "verdict": NONE,
+        "material_request": material_request,
+        "status": status,
+        "lines": [],
+        "outstanding": [],
+        "over_lines": [],
+        "stock_entries": [],
+        "totals": {"requested": 0.0, "submitted": 0.0, "pending": 0.0, "remaining": 0.0},
+        "headline": _(HEADLINES[NONE]),
+    }
+
+
 @frappe.whitelist()
 def get_transfer_summary(material_request: str) -> dict:
     """Per-line and overall transfer position for one Material Request.
@@ -43,7 +70,7 @@ def get_transfer_summary(material_request: str) -> dict:
         as_dict=True,
     )
     if not mr or mr.docstatus != 1 or mr.material_request_type != "Material Transfer":
-        return {"verdict": NONE, "lines": [], "stock_entries": []}
+        return _empty(material_request, mr.status if mr else None)
 
     requested = frappe.get_all(
         "Material Request Item",
@@ -52,7 +79,7 @@ def get_transfer_summary(material_request: str) -> dict:
         order_by="idx asc",
     )
     if not requested:
-        return {"verdict": NONE, "lines": [], "stock_entries": []}
+        return _empty(material_request, mr.status)
 
     # Sum the transfers per requested line, keeping submitted and not-yet-submitted apart:
     # a submitted transfer is done, one awaiting approval is a commitment nobody can see.
@@ -134,10 +161,5 @@ def get_transfer_summary(material_request: str) -> dict:
             "remaining": sum(l["remaining"] for l in lines),
         },
         # Said once here so the form, a report or a bench console all phrase it the same way
-        "headline": {
-            NONE: _("No transfer raised yet"),
-            PARTIAL: _("Partially transferred — a further transfer covers the remainder"),
-            COVERED: _("Already fully transferred — do not raise another"),
-            OVER: _("More has been transferred than requested"),
-        }[verdict],
+        "headline": _(HEADLINES[verdict]),
     }

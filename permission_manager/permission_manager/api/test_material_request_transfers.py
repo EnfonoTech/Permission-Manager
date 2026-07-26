@@ -215,6 +215,20 @@ class TestMaterialRequestTransfers(FrappeTestCase):
 		finally:
 			frappe.set_user("Administrator")
 
+	def test_every_verdict_returns_the_same_keys(self):
+		# a caller reading summary["headline"] must not have to know which branch ran; the
+		# early returns used to drop headline and totals
+		expected = {"verdict", "material_request", "status", "lines", "outstanding",
+		            "over_lines", "stock_entries", "totals", "headline"}
+		self.assertEqual(set(get_transfer_summary(self.mr.name)), expected)  # none
+		self._draft_transfer(40)
+		self.assertEqual(set(get_transfer_summary(self.mr.name)), expected)  # partial
+		self._draft_transfer(60)
+		self.assertEqual(set(get_transfer_summary(self.mr.name)), expected)  # covered
+		self._draft_transfer(10)
+		self.assertEqual(set(get_transfer_summary(self.mr.name)), expected)  # over
+		self.assertEqual(set(get_transfer_summary("NO-SUCH-MR-0001")), expected)  # missing
+
 	def test_purchase_request_is_out_of_scope(self):
 		mr = frappe.get_doc({
 			"doctype": "Material Request", "material_request_type": "Purchase",
