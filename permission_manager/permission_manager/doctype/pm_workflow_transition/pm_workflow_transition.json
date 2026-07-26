@@ -27,7 +27,8 @@
   "condition",
   "column_break_7",
   "example",
-  "workflow_builder_id"
+  "workflow_builder_id",
+  "is_generated"
  ],
  "fields": [
   {
@@ -189,13 +190,21 @@
    "fieldname": "example",
    "fieldtype": "HTML",
    "label": "Example",
-   "options": "<p><strong>Condition examples</strong></p>\n<pre><code>doc.grand_total &gt; 0\ndoc.grand_total &gt;= 10000\ndoc.department == \"Finance\"\nfrappe.session.user == doc.owner</code></pre>\n<p>Write conditions in simple Python. The transition is blocked if the condition evaluates to <code>False</code>. Allowed helpers:</p>\n<ul>\n<li><code>frappe.db.get_value</code></li>\n<li><code>frappe.db.get_list</code></li>\n<li><code>frappe.session</code></li>\n<li><code>frappe.utils.now_datetime</code></li>\n<li><code>frappe.utils.get_datetime</code></li>\n<li><code>frappe.utils.add_to_date</code></li>\n<li><code>frappe.utils.now</code></li>\n</ul>\n<hr/>\n<p><strong>Require Attachment</strong></p>\n<p>Tick <em>Require Attachment</em> on any transition where the user must upload at least one file before the action is allowed — for example, requiring a supporting document when submitting a Purchase Invoice for approval, or a signed copy when approving a Sales Order. If no file is attached, the action is blocked and a red banner appears on the form after the user attaches the file, reminding them to click the action button to proceed.</p>\n<p><strong>Example — Purchase Invoice approval workflow:</strong></p>\n<table style=\"width:100%;border-collapse:collapse;font-size:12px\">\n<thead><tr style=\"background:#f5f5f5\"><th style=\"padding:4px 8px;border:1px solid #ddd\">State</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Action</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Next State</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Require Attachment</th></tr></thead>\n<tbody>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Draft</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending Approval</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">✔</td></tr>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Approve</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Approved</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">—</td></tr>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Reject</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Rejected</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">—</td></tr>\n</tbody></table>\n<p>Only the <em>Draft → Pending</em> transition requires an attachment. Approve and Reject do not.</p>"
+   "options": "<p><strong>Condition examples</strong></p>\n<pre><code>doc.grand_total &gt; 0\ndoc.grand_total &gt;= 10000\ndoc.department == \"Finance\"\nfrappe.session.user == doc.owner</code></pre>\n<p>Write conditions in simple Python. The transition is blocked if the condition evaluates to <code>False</code>. Allowed helpers:</p>\n<ul>\n<li><code>frappe.db.get_value</code></li>\n<li><code>frappe.db.get_list</code></li>\n<li><code>frappe.session</code></li>\n<li><code>frappe.utils.now_datetime</code></li>\n<li><code>frappe.utils.get_datetime</code></li>\n<li><code>frappe.utils.add_to_date</code></li>\n<li><code>frappe.utils.now</code></li>\n</ul>\n<hr/>\n<p><strong>Require Attachment</strong></p>\n<p>Tick <em>Require Attachment</em> on any transition where the user must upload at least one file before the action is allowed \u2014 for example, requiring a supporting document when submitting a Purchase Invoice for approval, or a signed copy when approving a Sales Order. If no file is attached, the action is blocked and a red banner appears on the form after the user attaches the file, reminding them to click the action button to proceed.</p>\n<p><strong>Example \u2014 Purchase Invoice approval workflow:</strong></p>\n<table style=\"width:100%;border-collapse:collapse;font-size:12px\">\n<thead><tr style=\"background:#f5f5f5\"><th style=\"padding:4px 8px;border:1px solid #ddd\">State</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Action</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Next State</th><th style=\"padding:4px 8px;border:1px solid #ddd\">Require Attachment</th></tr></thead>\n<tbody>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Draft</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending Approval</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">\u2714</td></tr>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Approve</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Approved</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">\u2014</td></tr>\n<tr><td style=\"padding:4px 8px;border:1px solid #ddd\">Pending</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Reject</td><td style=\"padding:4px 8px;border:1px solid #ddd\">Rejected</td><td style=\"padding:4px 8px;border:1px solid #ddd;text-align:center\">\u2014</td></tr>\n</tbody></table>\n<p>Only the <em>Draft \u2192 Pending</em> transition requires an attachment. Approve and Reject do not.</p>"
   },
   {
    "fieldname": "workflow_builder_id",
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Workflow Builder ID"
+  },
+  {
+   "fieldname": "is_generated",
+   "fieldtype": "Check",
+   "label": "Generated From Approval Group Config",
+   "default": "0",
+   "read_only": 1,
+   "description": "Set by rebuild_approval_workflows(). A row with this ticked is owned by PM Approval Group config and is replaced on every rebuild; a row without it was added by hand and is carried across rebuilds."
   }
  ],
  "istable": 1,

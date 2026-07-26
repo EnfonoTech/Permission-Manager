@@ -17,7 +17,7 @@ Routing summary:
 """
 
 import frappe
-from frappe.utils import cstr
+from frappe.utils import cint, cstr
 
 FIELD = "custom_approval_group"
 
@@ -136,7 +136,9 @@ def _st(state, ds, role):
 def _t(state, action, nxt, role, cond=None, self_appr=0, attach=0, comment=0, rfc=0):
 	r = {"state": state, "action": action, "next_state": nxt, "approver_type": "Role",
 	     "allowed": role, "allow_self_approval": self_appr, "require_attachment": attach,
-	     "require_comment": comment, "is_return_for_correction": rfc}
+	     "require_comment": comment, "is_return_for_correction": rfc,
+	     # provenance: this row belongs to the config and is replaced on every rebuild
+	     "is_generated": 1}
 	if cond:
 		r["condition"] = cond
 	return r
@@ -184,54 +186,40 @@ def _stage_states(entry_states, k):
 	return "Pending L%d" % k
 
 
-# ── Rebuild safety: never silently drop a hand-added row ─────────────────────
-# `_build` deletes the whole PM Workflow and re-inserts what the config generates. Sites
-# routinely hold routes this config cannot express — a role allowed to raise one specific
-# journal template, currency-based routing — and those rows live only in the database. A
-# rebuild used to take them with it, leaving the approval path quietly broken.
-_ROW_KEY = ("state", "action", "next_state", "approver_type", "allowed", "condition", "matrix_level")
-_IDENTITY = ("state", "action", "approver_type", "allowed")
+# ── Rebuild safety: keep rows this config did not create ─────────────────────
+# `_build` deletes the whole PM Workflow and re-inserts what the config generates. Sites hold
+# routes the config cannot express — a role allowed to raise one specific journal template,
+# currency-based routing — and those rows live only in the database. A rebuild used to take
+# them with it, leaving the approval path quietly broken (Steel Force, 2026-07-25: Journal
+# Entry lost its Counter Sale route, Purchase Order lost its currency routing).
+#
+# Which rows survive is decided by provenance, not by comparing shapes: every generated row
+# carries is_generated=1, so anything without it was added by hand and is carried over. Rows
+# predating this field count as hand-added, which errs towards keeping them.
 _CHILD_META = {"name", "parent", "parentfield", "parenttype", "doctype", "idx",
                "owner", "creation", "modified", "modified_by", "docstatus"}
-
-
-def _sig(row, keys=_ROW_KEY):
-	get = row.get if hasattr(row, "get") else lambda k: getattr(row, k, None)
-	return tuple(cstr(get(k)).strip() for k in keys)
 
 
 def _strip_meta(row):
 	return {k: v for k, v in dict(row).items() if k not in _CHILD_META and v not in (None, "")}
 
 
-def _carry_over_manual_rows(existing, states, transitions):
-	"""(extra_states, extra_transitions) to re-attach after regenerating `existing`.
-
-	Anything the generator did not just produce is carried over, except a row the generator
-	has restated — same state/action/approver type/role, different condition — where the
-	generated version wins so the same action is never offered twice. Both the carried and
-	the superseded rows are logged, so a rebuild that changes routing says so.
-	"""
-	generated = {_sig(t) for t in transitions}
-	restated = {_sig(t, _IDENTITY) for t in transitions}
+def _carry_over_manual_rows(existing, states):
+	"""(extra_states, extra_transitions) to re-attach after regenerating `existing`."""
 	old = frappe.get_all("PM Workflow Transition",
 	                     filters={"parent": existing, "parenttype": "PM Workflow"},
 	                     fields=["*"], order_by="idx asc")
 
-	kept, kept_sigs, superseded = [], [], []
+	kept, dropped = [], []
 	for row in old:
-		if _sig(row) in generated:
-			continue
-		if _sig(row, _IDENTITY) in restated:
-			superseded.append(_sig(row))
-			continue
+		if cint(row.get("is_generated")):
+			continue                       # config owns this row; the fresh generation replaces it
 		# a row naming a role that no longer exists cannot be re-inserted
 		if row.get("approver_type") == "Role" and row.get("allowed") \
 				and not frappe.db.exists("Role", row.get("allowed")):
-			superseded.append(_sig(row))
+			dropped.append(row)
 			continue
-		kept.append(_strip_meta(row))
-		kept_sigs.append(_sig(row))
+		kept.append(row)
 
 	extra_states = []
 	if kept:
@@ -240,28 +228,31 @@ def _carry_over_manual_rows(existing, states, transitions):
 			"PM Workflow Document State",
 			filters={"parent": existing, "parenttype": "PM Workflow"}, fields=["*"])}
 		for row in kept:
-			# a carried transition is dead without the states it moves between
+			# a carried transition is dead without the states it moves between:
+			# PM Workflow.validate_docstatus throws on a transition whose state is missing
 			for st in (row.get("state"), row.get("next_state")):
 				if st and st not in have:
 					extra_states.append(_strip_meta(old_states[st]) if st in old_states
 					                    else {"state": st, "doc_status": "0"})
 					have.add(st)
 
-	if kept_sigs or superseded:
+	if kept or dropped:
+		describe = lambda r: " | ".join(cstr(r.get(f) or "") for f in
+			("state", "action", "next_state", "allowed", "condition"))
 		frappe.log_error(
 			title="PM Workflow rebuild: %s" % existing,
 			message=frappe.as_json({
-				"carried_over": [" | ".join(s) for s in kept_sigs],
-				"superseded_by_generated": [" | ".join(s) for s in superseded],
+				"carried_over_hand_added": [describe(r) for r in kept],
+				"dropped_role_no_longer_exists": [describe(r) for r in dropped],
 			}),
 		)
-	return extra_states, kept
+	return extra_states, [_strip_meta(r) for r in kept]
 
 
 def _build(document_type, workflow_name, states, transitions):
 	ex = frappe.db.get_value("PM Workflow", {"document_type": document_type}, "name")
 	extra_states, extra_transitions = (
-		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
+		_carry_over_manual_rows(ex, states) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
 	frappe.get_doc({
