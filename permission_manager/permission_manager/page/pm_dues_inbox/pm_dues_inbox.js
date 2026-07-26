@@ -352,8 +352,8 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 
 	function bind() {
 		$body.find(".dues-chip").on("click", function () {
-			const kind = $(this).data("kind");
-			const value = String($(this).data("value") || "");
+			const kind = $(this).attr("data-kind");
+			const value = String($(this).attr("data-value") || "");
 			state[kind] = value || null;
 			render();
 		});
@@ -367,7 +367,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		}, 200));
 
 		$body.find(".dues-group-hdr").on("click", function () {
-			const src = $(this).data("source");
+			const src = $(this).attr("data-source");
 			state.collapsed[src] = !state.collapsed[src];
 			render();
 		});
@@ -390,12 +390,25 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 	}
 
 	function row_of(el) {
+		// .attr(), never .data(): jQuery coerces a data attribute that looks like a number, so a
+		// voucher named "2002000003" came back as the NUMBER 2002000003 and never matched the
+		// string on the row object. 119 of 979 rows on this site have purely numeric names, and
+		// their Follow up / Pay buttons silently did nothing.
 		const $row = $(el).closest(".dues-row");
-		const voucher = $row.data("voucher");
-		const doctype = $row.data("doctype");
-		return (state.data.rows || []).find(
-			(r) => r.voucher === voucher && r.voucher_doctype === doctype
+		const voucher = $row.attr("data-voucher");
+		const doctype = $row.attr("data-doctype");
+		const row = (state.data.rows || []).find(
+			(r) => String(r.voucher) === String(voucher) && r.voucher_doctype === doctype
 		);
+		if (!row) {
+			// never fail silently again
+			frappe.show_alert(
+				{ message: __("Could not find {0} in the loaded rows — refresh and try again.", [voucher]),
+				  indicator: "red" },
+				6
+			);
+		}
+		return row;
 	}
 
 	function follow_up_dialog(row) {
