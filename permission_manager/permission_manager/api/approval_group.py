@@ -17,6 +17,7 @@ Routing summary:
 """
 
 import frappe
+from frappe.utils import cstr
 
 FIELD = "custom_approval_group"
 
@@ -183,14 +184,90 @@ def _stage_states(entry_states, k):
 	return "Pending L%d" % k
 
 
+# ── Rebuild safety: never silently drop a hand-added row ─────────────────────
+# `_build` deletes the whole PM Workflow and re-inserts what the config generates. Sites
+# routinely hold routes this config cannot express — a role allowed to raise one specific
+# journal template, currency-based routing — and those rows live only in the database. A
+# rebuild used to take them with it, leaving the approval path quietly broken.
+_ROW_KEY = ("state", "action", "next_state", "approver_type", "allowed", "condition", "matrix_level")
+_IDENTITY = ("state", "action", "approver_type", "allowed")
+_CHILD_META = {"name", "parent", "parentfield", "parenttype", "doctype", "idx",
+               "owner", "creation", "modified", "modified_by", "docstatus"}
+
+
+def _sig(row, keys=_ROW_KEY):
+	get = row.get if hasattr(row, "get") else lambda k: getattr(row, k, None)
+	return tuple(cstr(get(k)).strip() for k in keys)
+
+
+def _strip_meta(row):
+	return {k: v for k, v in dict(row).items() if k not in _CHILD_META and v not in (None, "")}
+
+
+def _carry_over_manual_rows(existing, states, transitions):
+	"""(extra_states, extra_transitions) to re-attach after regenerating `existing`.
+
+	Anything the generator did not just produce is carried over, except a row the generator
+	has restated — same state/action/approver type/role, different condition — where the
+	generated version wins so the same action is never offered twice. Both the carried and
+	the superseded rows are logged, so a rebuild that changes routing says so.
+	"""
+	generated = {_sig(t) for t in transitions}
+	restated = {_sig(t, _IDENTITY) for t in transitions}
+	old = frappe.get_all("PM Workflow Transition",
+	                     filters={"parent": existing, "parenttype": "PM Workflow"},
+	                     fields=["*"], order_by="idx asc")
+
+	kept, kept_sigs, superseded = [], [], []
+	for row in old:
+		if _sig(row) in generated:
+			continue
+		if _sig(row, _IDENTITY) in restated:
+			superseded.append(_sig(row))
+			continue
+		# a row naming a role that no longer exists cannot be re-inserted
+		if row.get("approver_type") == "Role" and row.get("allowed") \
+				and not frappe.db.exists("Role", row.get("allowed")):
+			superseded.append(_sig(row))
+			continue
+		kept.append(_strip_meta(row))
+		kept_sigs.append(_sig(row))
+
+	extra_states = []
+	if kept:
+		have = {cstr(s.get("state")) for s in states}
+		old_states = {s["state"]: s for s in frappe.get_all(
+			"PM Workflow Document State",
+			filters={"parent": existing, "parenttype": "PM Workflow"}, fields=["*"])}
+		for row in kept:
+			# a carried transition is dead without the states it moves between
+			for st in (row.get("state"), row.get("next_state")):
+				if st and st not in have:
+					extra_states.append(_strip_meta(old_states[st]) if st in old_states
+					                    else {"state": st, "doc_status": "0"})
+					have.add(st)
+
+	if kept_sigs or superseded:
+		frappe.log_error(
+			title="PM Workflow rebuild: %s" % existing,
+			message=frappe.as_json({
+				"carried_over": [" | ".join(s) for s in kept_sigs],
+				"superseded_by_generated": [" | ".join(s) for s in superseded],
+			}),
+		)
+	return extra_states, kept
+
+
 def _build(document_type, workflow_name, states, transitions):
 	ex = frappe.db.get_value("PM Workflow", {"document_type": document_type}, "name")
+	extra_states, extra_transitions = (
+		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
 	frappe.get_doc({
 		"doctype": "PM Workflow", "workflow_name": workflow_name, "document_type": document_type,
 		"is_active": 1, "workflow_state_field": "workflow_state", "send_email_alert": 1,
-		"states": states, "transitions": transitions,
+		"states": states + extra_states, "transitions": transitions + extra_transitions,
 	}).insert(ignore_permissions=True)
 
 
