@@ -198,7 +198,9 @@ def _stage_states(entry_states, k):
 # predating this field have no stamp and so count as hand-added, which errs towards keeping
 # them — but a legacy row identical to one the generator just produced is dropped, or the first
 # rebuild after this field ships would duplicate every generated row it inherited.
-_ROW_KEY = ("state", "action", "next_state", "approver_type", "allowed", "condition", "matrix_level")
+# matrix_level is deliberately out: a generated row leaves it unset and the field defaults to 1
+# in the database, so including it made every comparison fail
+_ROW_KEY = ("state", "action", "next_state", "approver_type", "allowed", "condition")
 _CHILD_META = {"name", "parent", "parentfield", "parenttype", "doctype", "idx",
                "owner", "creation", "modified", "modified_by", "docstatus"}
 
