@@ -113,9 +113,11 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 	def test_carried_row_brings_its_state_along(self):
 		# PM Workflow.validate_docstatus throws on a transition whose state is not in the
 		# states table, so a carried row has to drag its state back in with it
-		self._add_manual(_tx("Pending", "Hold", "On Hold", "Accounts User"))
+		# state and transition have to go in together: validate_docstatus rejects a transition
+		# whose state is not already in the table, so two separate saves cannot get there
 		doc = frappe.get_doc("PM Workflow", WF)
 		doc.append("states", _states("On Hold")[0])
+		doc.append("transitions", _tx("Pending", "Hold", "On Hold", "Accounts User"))
 		doc.save(ignore_permissions=True)
 		frappe.db.commit()
 
