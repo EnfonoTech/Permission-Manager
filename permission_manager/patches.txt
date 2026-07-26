@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 permission_manager.permission_manager.patches.seed_default_approval_groups
 permission_manager.permission_manager.patches.seed_asset_group_and_pdc
+permission_manager.permission_manager.patches.seed_dues_sources
