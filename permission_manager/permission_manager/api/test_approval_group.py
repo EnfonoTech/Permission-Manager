@@ -39,6 +39,14 @@ def _signatures(workflow_name):
 class TestRebuildCarriesManualRows(FrappeTestCase):
 	def setUp(self):
 		self._drop()
+		# state and action on a transition are Links, so the masters have to exist first —
+		# the same thing _ensure_masters() does for the generated states
+		self._masters = []
+		for dt, field, value in (("Workflow State", "workflow_state_name", "On Hold"),
+		                         ("Workflow Action Master", "workflow_action_name", "Hold")):
+			if not frappe.db.exists(dt, value):
+				frappe.get_doc({"doctype": dt, field: value}).insert(ignore_permissions=True)
+				self._masters.append((dt, value))
 		self.states = _states("Draft", "Pending", "Approved", "Rejected")
 		self.generated = [
 			_tx("Draft", "Send for Approval", "Pending", "System Manager"),
@@ -48,6 +56,9 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 
 	def tearDown(self):
 		self._drop()
+		for dt, value in getattr(self, "_masters", []):
+			frappe.delete_doc(dt, value, force=1, ignore_missing=True)
+		frappe.db.commit()
 
 	def _drop(self):
 		for name in frappe.get_all("PM Workflow", filters={"document_type": TARGET}, pluck="name"):
