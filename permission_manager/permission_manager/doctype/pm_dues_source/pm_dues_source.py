@@ -25,6 +25,9 @@ FIELD_SETTINGS = (
 
 NUMERIC_FIELDTYPES = {"Currency", "Float", "Int", "Percent"}
 DATE_FIELDTYPES = {"Date", "Datetime"}
+PARTY_FIELDTYPES = {"Link", "Dynamic Link", "Data", "Select", "Read Only"}
+# the only default fields that make sense as a due date
+DATE_DEFAULT_FIELDS = {"creation", "modified"}
 
 
 class PMDuesSource(Document):
@@ -54,6 +57,15 @@ class PMDuesSource(Document):
             )
 
     def validate_fields_exist(self):
+        """Every configured name must be a real, queryable column of the right kind.
+
+        `meta.get_field()` alone is not enough: Table, Section Break and virtual fields have no
+        column, and `doctype` lives in default_fields but is stripped before the query. Accepting
+        any of those saves cleanly here and then throws 1054 at read time, where the whole stream
+        vanishes behind one warning line.
+        """
+        from permission_manager.permission_manager.api.dues_inbox import field_is_usable
+
         meta = frappe.get_meta(self.voucher_doctype)
         for fieldname, mandatory in FIELD_SETTINGS:
             value = (self.get(fieldname) or "").strip()
@@ -62,22 +74,34 @@ class PMDuesSource(Document):
                     frappe.throw(_("%s is required.") % _(self.meta.get_label(fieldname)))
                 continue
             self.set(fieldname, value)
-            df = meta.get_field(value)
-            if not df and value not in frappe.model.default_fields:
+
+            df, usable = field_is_usable(meta, value)
+            if not usable:
                 frappe.throw(
-                    _("%(doctype)s has no field %(field)s. Check the spelling on the target DocType.")
+                    _("%(doctype)s has no queryable field %(field)s. Check the spelling, and note "
+                      "that table, section and virtual fields cannot be used here.")
                     % {"doctype": frappe.bold(self.voucher_doctype), "field": frappe.bold(value)}
                 )
-            # A due date that is not a date, or an amount that is not numeric, produces rows that
-            # look plausible and sort wrongly — cheaper to refuse here.
-            if df and fieldname == "date_field" and df.fieldtype not in DATE_FIELDTYPES:
+
+            # unconditional per-slot checks: a default field must not slip past the type guard
+            if fieldname == "date_field":
+                ok = (df and df.fieldtype in DATE_FIELDTYPES) or value in DATE_DEFAULT_FIELDS
+                if not ok:
+                    frappe.throw(
+                        _("%(field)s is not a date. Pick the field holding the due date%(hint)s.")
+                        % {"field": frappe.bold(value),
+                           "hint": (" (a %s)" % df.fieldtype) if df else ""}
+                    )
+            elif fieldname == "amount_field":
+                if not df or df.fieldtype not in NUMERIC_FIELDTYPES:
+                    frappe.throw(
+                        _("%(field)s is not an amount%(hint)s.")
+                        % {"field": frappe.bold(value),
+                           "hint": (", it is a %s" % df.fieldtype) if df else ""}
+                    )
+            elif df and df.fieldtype not in PARTY_FIELDTYPES:
                 frappe.throw(
-                    _("%(field)s is a %(type)s, not a date. Pick the field holding the due date.")
-                    % {"field": frappe.bold(value), "type": df.fieldtype}
-                )
-            if df and fieldname == "amount_field" and df.fieldtype not in NUMERIC_FIELDTYPES:
-                frappe.throw(
-                    _("%(field)s is a %(type)s, not an amount.")
+                    _("%(field)s is a %(type)s, which cannot identify a party, company or branch.")
                     % {"field": frappe.bold(value), "type": df.fieldtype}
                 )
 
@@ -99,11 +123,14 @@ class PMDuesSource(Document):
             frappe.throw(_("Extra Filters is not valid JSON: %s") % e)
         if not isinstance(parsed, dict):
             frappe.throw(_("Extra Filters must be a JSON object of fieldname to condition."))
+        from permission_manager.permission_manager.api.dues_inbox import field_is_usable
+
         meta = frappe.get_meta(self.voucher_doctype)
         for fieldname in parsed:
-            if not meta.get_field(fieldname) and fieldname not in frappe.model.default_fields:
+            _df, usable = field_is_usable(meta, fieldname)
+            if not usable:
                 frappe.throw(
-                    _("Extra Filters names %(field)s, which %(doctype)s does not have.")
+                    _("Extra Filters names %(field)s, which is not a queryable field on %(doctype)s.")
                     % {"field": frappe.bold(fieldname), "doctype": frappe.bold(self.voucher_doctype)}
                 )
 

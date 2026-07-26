@@ -98,7 +98,7 @@ class TestDuesInboxConfig(FrappeTestCase):
             self.assertEqual(row["direction"], "Receivable")
             self.assertGreater(row["amount"], 0)
             self.assertIn(row["bucket"], ("not_due", "0-30", "31-60", "61-90", "90+"))
-            self.assertIn(row["worklist"], ("untouched", "promised", "snoozed", "overdue"))
+            self.assertIn(row["worklist"], ("untouched", "promised", "snoozed", "touched"))
 
     def test_disabled_source_disappears(self):
         src = _make_source()
@@ -142,6 +142,9 @@ class TestDuesInboxConfig(FrappeTestCase):
             len(live),
             "bucket counts and live rows disagree",
         )
+        # amounts are kept per currency, never summed across them
+        for bucket in data["buckets"].values():
+            self.assertIsInstance(bucket["amounts"], dict)
 
     # ── follow-up state ───────────────────────────────────────────────────────
     def test_follow_up_attaches_and_snooze_hides_the_row(self):
@@ -203,6 +206,78 @@ class TestDuesInboxConfig(FrappeTestCase):
                            state="Whatever")
 
     # ── bucket maths ──────────────────────────────────────────────────────────
+    def test_field_with_no_column_is_refused(self):
+        # a Table field passes meta.get_field() but has no column: accepting it saves cleanly and
+        # then throws 1054 at read time, taking the whole stream down
+        with self.assertRaises(frappe.ValidationError):
+            _make_source(company_field="items")
+
+    def test_default_field_that_is_not_a_column_is_refused(self):
+        # "doctype" is in frappe.model.default_fields but is stripped before the query
+        with self.assertRaises(frappe.ValidationError):
+            _make_source(date_field="doctype")
+
+    def test_extra_filters_naming_a_table_field_is_refused(self):
+        with self.assertRaises(frappe.ValidationError):
+            _make_source(extra_filters=json.dumps({"items": 1}))
+
+    def test_amount_carries_its_own_currency(self):
+        # Sales Invoice.outstanding_amount is bound to party_account_currency, not the company
+        # currency, so each row must report the currency of its own amount
+        _make_source()
+
+        data = get_dues_inbox()
+
+        rows = [r for r in data["rows"] if r["source"] == SOURCE]
+        if not rows:
+            return
+        for row in rows:
+            self.assertTrue(row["currency"], "a row came back with no currency")
+        # and the KPI totals are keyed by currency rather than added together
+        for entry in data["kpis"]["by_direction"].values():
+            self.assertIsInstance(entry["amounts"], dict)
+
+    def test_company_currency_amount_field_is_labelled_with_company_currency(self):
+        # base_paid_amount declares Company:company:default_currency
+        src = _make_source(source_name=SOURCE, voucher_doctype="Payment Entry",
+                           date_field="posting_date", amount_field="base_paid_amount",
+                           party_field="party", party_type=None, party_type_field="party_type",
+                           direction="Instrument")
+        try:
+            data = get_dues_inbox()
+            company_currency = data["company_currency"]
+            for row in [r for r in data["rows"] if r["source"] == SOURCE]:
+                self.assertEqual(row["currency"], company_currency)
+        finally:
+            frappe.delete_doc("PM Dues Source", src.name, force=True)
+            frappe.db.commit()
+
+    def test_follow_up_on_a_voucher_type_that_is_not_a_source_is_refused(self):
+        # read access on some unrelated doctype must not be a way into writing follow-ups
+        _make_source()
+        with self.assertRaises(frappe.PermissionError):
+            save_follow_up(voucher_doctype="ToDo", voucher="whatever", state="Contacted")
+
+    def test_an_omitted_note_does_not_wipe_the_existing_one(self):
+        _make_source()
+        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
+        if not row:
+            return
+        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
+                       state="Contacted", note="spoke to accounts")
+        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
+                       state="Escalated")
+
+        again = next(r for r in get_dues_inbox()["rows"]
+                     if r["voucher"] == row["voucher"] and r["source"] == SOURCE)
+        self.assertEqual(again["note"], "spoke to accounts")
+        self.assertEqual(again["state"], "Escalated")
+
+        frappe.delete_doc("PM Dues Follow Up",
+                          frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name"),
+                          force=True)
+        frappe.db.commit()
+
     def test_bucket_boundaries(self):
         self.assertEqual(_bucket_of(-1), "not_due")
         self.assertEqual(_bucket_of(0), "0-30")
