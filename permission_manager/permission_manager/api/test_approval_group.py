@@ -140,6 +140,24 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 		                                        filters={"parent": WF}, pluck="state"))
 		self.assertIn(("Pending", "Hold", "On Hold", "Accounts User", ""), _signatures(WF))
 
+	def test_unstamped_copy_of_a_generated_row_is_not_duplicated(self):
+		# every row predating the is_generated field looks hand-added. A rebuild must not
+		# re-attach one that is identical to a row it just generated, or the first rebuild
+		# after this field ships would double every inherited row.
+		legacy = dict(self.generated[1])
+		legacy.pop("is_generated")
+		self._add_manual(legacy)
+		self.assertEqual(len(_signatures(WF)), 2)  # same signature, so still two distinct rows
+
+		_build(TARGET, WF, self.states, self.generated)
+
+		rows = frappe.get_all("PM Workflow Transition",
+		                      filters={"parent": WF, "parenttype": "PM Workflow"},
+		                      fields=["state", "action", "allowed"])
+		approvals = [r for r in rows if r.action == "Approve"]
+		self.assertEqual(len(approvals), 1, "legacy copy of a generated row was duplicated")
+		self.assertEqual(len(rows), 2)
+
 	def test_row_for_deleted_role_is_dropped_not_fatal(self):
 		self._add_manual(_manual("Draft", "Send for Approval", "Pending", "No Such Role Here"),
 		                 ignore_links=True)

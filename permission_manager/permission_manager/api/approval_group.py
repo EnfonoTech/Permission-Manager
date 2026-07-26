@@ -195,7 +195,10 @@ def _stage_states(entry_states, k):
 #
 # Which rows survive is decided by provenance, not by comparing shapes: every generated row
 # carries is_generated=1, so anything without it was added by hand and is carried over. Rows
-# predating this field count as hand-added, which errs towards keeping them.
+# predating this field have no stamp and so count as hand-added, which errs towards keeping
+# them — but a legacy row identical to one the generator just produced is dropped, or the first
+# rebuild after this field ships would duplicate every generated row it inherited.
+_ROW_KEY = ("state", "action", "next_state", "approver_type", "allowed", "condition", "matrix_level")
 _CHILD_META = {"name", "parent", "parentfield", "parenttype", "doctype", "idx",
                "owner", "creation", "modified", "modified_by", "docstatus"}
 
@@ -204,16 +207,24 @@ def _strip_meta(row):
 	return {k: v for k, v in dict(row).items() if k not in _CHILD_META and v not in (None, "")}
 
 
-def _carry_over_manual_rows(existing, states):
+def _signature(row):
+	return tuple(cstr(row.get(f) or "").strip() for f in _ROW_KEY)
+
+
+def _carry_over_manual_rows(existing, states, transitions):
 	"""(extra_states, extra_transitions) to re-attach after regenerating `existing`."""
 	old = frappe.get_all("PM Workflow Transition",
 	                     filters={"parent": existing, "parenttype": "PM Workflow"},
 	                     fields=["*"], order_by="idx asc")
+	generated = {_signature(t) for t in transitions}
 
 	kept, dropped = [], []
 	for row in old:
 		if cint(row.get("is_generated")):
 			continue                       # config owns this row; the fresh generation replaces it
+		if _signature(row) in generated:
+			continue                       # identical to a row just generated: an unstamped legacy
+			                               # copy, and re-adding it would duplicate the action
 		# a row naming a role that no longer exists cannot be re-inserted
 		if row.get("approver_type") == "Role" and row.get("allowed") \
 				and not frappe.db.exists("Role", row.get("allowed")):
@@ -252,7 +263,7 @@ def _carry_over_manual_rows(existing, states):
 def _build(document_type, workflow_name, states, transitions):
 	ex = frappe.db.get_value("PM Workflow", {"document_type": document_type}, "name")
 	extra_states, extra_transitions = (
-		_carry_over_manual_rows(ex, states) if ex else ([], []))
+		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
 	frappe.get_doc({
