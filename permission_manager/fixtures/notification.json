@@ -249,8 +249,8 @@
   "attach_files": "",
   "attach_print": 0,
   "channel": "System Notification",
-  "condition": "doc.docstatus == 1 and doc.reference_no and doc.custom_zatca_payment_means_code == '20'",
-  "date_changed": "reference_date",
+  "condition": "doc.docstatus == 1 and doc.reference_no and doc.custom_zatca_payment_means_code == '20' and not doc.clearance_date",
+  "date_changed": "posting_date",
   "days_in_advance": 3,
   "docstatus": 0,
   "doctype": "Notification",
@@ -259,10 +259,10 @@
   "event": "Days Before",
   "from_attach_field": null,
   "is_standard": 0,
-  "message": "<b>Post-Dated Cheque due today</b><br>\nPayment Entry: {{ doc.name }}<br>\nParty: {{ doc.party_name or doc.party }} ({{ doc.party_type }})<br>\nCheque / Ref No: {{ doc.reference_no }}<br>\nCheque Date: {{ doc.reference_date }}<br>\nMode of Payment: {{ doc.mode_of_payment }}<br>\nPaid Amount: {{ doc.paid_amount }} &nbsp; Received Amount: {{ doc.received_amount }}<br>\nCompany: {{ doc.company }}",
+  "message": "<b>Post-Dated Cheque \u2014 3 days to its posting date</b><br>\nPayment Entry: {{ doc.name }}<br>\nPosting Date: <b>{{ doc.posting_date }}</b> (3 days from today)<br>\nParty: {{ doc.party_name or doc.party }} ({{ doc.party_type }})<br>\nCheque / Ref No: {{ doc.reference_no }}<br>\nCheque Date: {{ doc.reference_date }}<br>\nMode of Payment: {{ doc.mode_of_payment }}<br>\nPaid Amount: {{ doc.paid_amount }} &nbsp; Received Amount: {{ doc.received_amount }}<br>\nCompany: {{ doc.company }}",
   "message_type": "Markdown",
   "method": null,
-  "modified": "2026-07-25 14:50:51.665863",
+  "modified": "2026-07-27 00:00:00.000000",
   "module": null,
   "name": "PDC Cheque Date Reminder",
   "print_format": null,
@@ -285,7 +285,7 @@
   "sender_email": null,
   "set_property_after_alert": null,
   "slack_webhook_url": null,
-  "subject": "PDC due today: {{ doc.name }} - {{ doc.party_name or doc.party }}",
+  "subject": "PDC in 3 days (posting {{ doc.posting_date }}): {{ doc.name }} - {{ doc.party_name or doc.party }}",
   "value_changed": null
  }
 ]
