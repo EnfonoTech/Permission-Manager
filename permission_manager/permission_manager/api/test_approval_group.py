@@ -170,6 +170,16 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 		                                  "action": "Send for Approval"})
 		self.assertEqual(len(matches), 1, "duplicate hand-added rows accumulated across rebuilds")
 
+	def test_email_alert_switch_is_not_flipped_back_on(self):
+		frappe.db.set_value("PM Workflow", WF, "send_email_alert", 0)
+		frappe.clear_document_cache("PM Workflow", WF)
+		frappe.db.commit()
+
+		_build(TARGET, WF, self.states, self.generated)
+
+		self.assertEqual(frappe.db.get_value("PM Workflow", WF, "send_email_alert"), 0,
+		                 "rebuild re-enabled approval emails the site had turned off")
+
 	def test_row_for_deleted_role_is_dropped_not_fatal(self):
 		self._add_manual(_manual("Draft", "Send for Approval", "Pending", "No Such Role Here"),
 		                 ignore_links=True)

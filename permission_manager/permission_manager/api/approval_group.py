@@ -267,13 +267,18 @@ def _carry_over_manual_rows(existing, states, transitions):
 
 def _build(document_type, workflow_name, states, transitions):
 	ex = frappe.db.get_value("PM Workflow", {"document_type": document_type}, "name")
+	# whether approval emails fire is an operational switch a site flips — Steel Force has it off
+	# while no outgoing account is configured — not something this config derives, so a rebuild
+	# must leave it as it found it
+	send_email_alert = cint(frappe.db.get_value("PM Workflow", ex, "send_email_alert")) if ex else 1
 	extra_states, extra_transitions = (
 		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
 	frappe.get_doc({
 		"doctype": "PM Workflow", "workflow_name": workflow_name, "document_type": document_type,
-		"is_active": 1, "workflow_state_field": "workflow_state", "send_email_alert": 1,
+		"is_active": 1, "workflow_state_field": "workflow_state",
+		"send_email_alert": send_email_alert,
 		"states": states + extra_states, "transitions": transitions + extra_transitions,
 	}).insert(ignore_permissions=True)
 
