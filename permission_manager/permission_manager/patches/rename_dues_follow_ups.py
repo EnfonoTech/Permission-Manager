@@ -13,6 +13,9 @@ def execute():
     if not frappe.db.exists("DocType", "PM Dues Follow Up"):
         return
 
+    # the model-level function, not frappe.rename_doc: only this one takes ignore_permissions
+    from frappe.model.rename_doc import rename_doc
+
     from permission_manager.permission_manager.doctype.pm_dues_follow_up.pm_dues_follow_up import (
         doctype_code,
     )
@@ -23,8 +26,8 @@ def execute():
         target = "DUES-%s-%s" % (doctype_code(row.voucher_doctype), row.voucher)
         if frappe.db.exists("PM Dues Follow Up", target):
             continue
-        frappe.rename_doc("PM Dues Follow Up", row.name, target, force=True,
-                          show_alert=False, ignore_permissions=True)
+        rename_doc("PM Dues Follow Up", row.name, target, force=True, show_alert=False,
+                   ignore_permissions=True)
         print("Dues Inbox: renamed %s to %s" % (row.name, target))
 
     frappe.db.commit()
