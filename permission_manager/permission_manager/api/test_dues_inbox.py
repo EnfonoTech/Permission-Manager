@@ -278,6 +278,64 @@ class TestDuesInboxConfig(FrappeTestCase):
                           force=True)
         frappe.db.commit()
 
+    def test_follow_up_is_named_after_its_voucher(self):
+        _make_source()
+        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
+        if not row:
+            return
+        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
+                       state="Contacted", note="named check")
+        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
+
+        self.assertEqual(name, "DUES-SI-" + row["voucher"],
+                         "follow-ups should be readable, not hashes")
+
+        frappe.delete_doc("PM Dues Follow Up", name, force=True)
+        frappe.db.commit()
+
+    def test_owner_gets_a_real_assignment(self):
+        # "Owned By" used to be a name in a column that told nobody anything
+        _make_source()
+        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
+        other = frappe.db.get_value("User", {"name": ["not in", ["Administrator", "Guest"]],
+                                             "enabled": 1}, "name")
+        if not row or not other:
+            return
+        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
+                       state="Contacted", owner_user=other)
+        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
+
+        todos = frappe.get_all("ToDo", filters={"reference_type": "PM Dues Follow Up",
+                                                "reference_name": name, "allocated_to": other,
+                                                "status": ["!=", "Cancelled"]})
+        self.assertTrue(todos, "assigning an owner did not create their ToDo")
+
+        frappe.delete_doc("PM Dues Follow Up", name, force=True)
+        frappe.db.commit()
+
+    def test_expired_snooze_is_reopened_by_the_daily_job(self):
+        from permission_manager.permission_manager.api.dues_reminders import reopen_expired_snoozes
+
+        _make_source()
+        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
+        if not row:
+            return
+        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
+                       state="Snoozed", snooze_until=add_days(today(), 3))
+        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
+        # move the date into the past the way time would
+        frappe.db.set_value("PM Dues Follow Up", name, "snooze_until", add_days(today(), -1),
+                            update_modified=False)
+
+        reopen_expired_snoozes()
+
+        doc = frappe.get_doc("PM Dues Follow Up", name)
+        self.assertEqual(doc.state, "Open", "an expired snooze must come back as work to do")
+        self.assertFalse(doc.snooze_until)
+
+        frappe.delete_doc("PM Dues Follow Up", name, force=True)
+        frappe.db.commit()
+
     def test_bucket_boundaries(self):
         self.assertEqual(_bucket_of(-1), "not_due")
         self.assertEqual(_bucket_of(0), "0-30")

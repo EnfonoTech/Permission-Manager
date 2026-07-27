@@ -36,7 +36,6 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 
 	page.set_primary_action(__("Refresh"), load, "refresh");
 	page.add_menu_item(__("Manage sources"), () => frappe.set_route("List", "PM Dues Source"));
-	page.add_menu_item(__("All follow-ups"), () => frappe.set_route("List", "PM Dues Follow Up"));
 	page.add_menu_item(__("Clear date range"), () => {
 		page.fields_dict.due_from.set_value("");
 		page.fields_dict.due_to.set_value("");
@@ -97,10 +96,14 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		if (state.source) rows = rows.filter((r) => r.source === state.source);
 		if (state.bucket) rows = rows.filter((r) => r.bucket === state.bucket);
 		if (state.worklist && state.worklist !== "snoozed") {
-			rows =
-				state.worklist === "due_today"
-					? rows.filter((r) => r.days_overdue === 0)
-					: rows.filter((r) => r.worklist === state.worklist);
+			if (state.worklist === "due_today") {
+				rows = rows.filter((r) => r.days_overdue === 0);
+			} else if (state.worklist === "mine") {
+				// an overlay, not a bucket: my rows whatever state they are in
+				rows = rows.filter((r) => r.owner_user === frappe.session.user);
+			} else {
+				rows = rows.filter((r) => r.worklist === state.worklist);
+			}
 		}
 		if (state.search) {
 			const q = state.search.toLowerCase();
@@ -209,6 +212,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		// follow-up the two are the same number, and two chips with one meaning is just noise.
 		const work = [
 			["", __("Everything"), live.length, __("No follow-up filter")],
+			["mine", __("Mine"), w.mine, __("Follow-ups you own")],
 			["untouched", __("Untouched"), w.untouched, __("Nothing logged against these yet")],
 			["due_today", __("Due today"), w.due_today, __("Falls due exactly today")],
 			["promised", __("Promised"), w.promised, __("Party promised a date")],

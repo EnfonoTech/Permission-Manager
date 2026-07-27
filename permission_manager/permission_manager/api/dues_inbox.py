@@ -27,7 +27,7 @@ from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate, today
 
 BUCKET_KEYS = ("not_due", "0-30", "31-60", "61-90", "90+")
-WORKLISTS = ("untouched", "promised", "snoozed", "due_today", "touched")
+WORKLISTS = ("untouched", "promised", "snoozed", "due_today", "touched", "mine")
 ACTIVE_STATES = ("Open", "Contacted", "Promised", "Snoozed", "Disputed", "Escalated", "Settled")
 OWNER_OVERRIDE_ROLES = ("Accounts Manager", "System Manager")
 
@@ -379,11 +379,17 @@ def _bucket_counts(rows):
 
 
 def _worklist_counts(rows):
+    """Chip counts. due_today and mine are overlays on the others, not exclusive buckets."""
     counts = {key: 0 for key in WORKLISTS}
+    me = frappe.session.user
     for row in rows:
         counts[row["worklist"]] = counts.get(row["worklist"], 0) + 1
-        if row["days_overdue"] == 0 and not row["snoozed"]:
+        if row["snoozed"]:
+            continue
+        if row["days_overdue"] == 0:
             counts["due_today"] += 1
+        if row["owner_user"] == me:
+            counts["mine"] += 1
     return counts
 
 

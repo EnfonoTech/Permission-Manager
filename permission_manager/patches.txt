@@ -7,3 +7,4 @@
 permission_manager.permission_manager.patches.seed_default_approval_groups
 permission_manager.permission_manager.patches.seed_asset_group_and_pdc
 permission_manager.permission_manager.patches.seed_dues_sources
+permission_manager.permission_manager.patches.rename_dues_follow_ups
