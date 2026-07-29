@@ -7,7 +7,7 @@ exists, and skips one whose voucher DocType or fields are missing on this site.
 
 The PDC definition is copied from the live "PDC Cheque Date Reminder" Notification so the inbox
 and that alert agree on what a post-dated cheque is: a submitted Payment Entry with a reference
-number, ZATCA payment means 20 (cheque) and no clearance date, dated by posting_date.
+number, ZATCA payment means 20 (cheque) and no clearance date, dated by reference_date.
 """
 
 import json
@@ -48,7 +48,7 @@ SOURCES = [
         "label": "Cheques maturing",
         "direction": "Instrument",
         "voucher_doctype": "Payment Entry",
-        "date_field": "posting_date",
+        "date_field": "reference_date",
         "amount_field": "base_paid_amount",
         "party_field": "party",
         "party_type_field": "party_type",

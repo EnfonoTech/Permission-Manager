@@ -197,7 +197,10 @@ def _rows_for_source(src, company, branch, as_on, due_from=None, due_to=None):
         fields=fields,
         order_by=date_field + " asc",
         limit_page_length=ROW_CAP + 1,
-        ignore_ifnull=True,
+        # no ignore_ifnull: a filter of ["is", "set"] compiles to ifnull(field,'') != '' and
+        # ignore_ifnull strips exactly that, so any source using is set / is not set returned
+        # nothing at all. The Post Dated Cheques source uses both, and its stream read 0 on a site
+        # with 29 matching cheques.
     )
     was_capped = len(records) > ROW_CAP
     total = None
