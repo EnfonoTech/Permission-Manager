@@ -76,12 +76,16 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 	// ── money ─────────────────────────────────────────────────────────────────
 	// One line per currency. A single figure would be a lie the moment a party account is foreign.
 
+	// The decimals belong to the currency, never to this page. BHD carries three; the KPI cards were
+	// hardcoded to none and the group totals to two, so 43,981.36 printed as 43,981 in one place and
+	// 48,431.36 in another. Leaving the precision out lets format_currency read it from the currency
+	// (System Settings currency_precision 3, number format #,###.### for BHD).
 	function money(amounts, precision) {
 		const keys = Object.keys(amounts || {}).filter((c) => amounts[c]);
-		if (!keys.length) return format_currency(0, state.data.company_currency, 0);
+		if (!keys.length) return format_currency(0, state.data.company_currency);
 		return keys
 			.sort()
-			.map((c) => format_currency(amounts[c], c, precision === undefined ? 0 : precision))
+			.map((c) => format_currency(amounts[c], c, precision))
 			.join(`<span class="dues-cur-sep">+</span>`);
 	}
 
@@ -270,7 +274,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 				`<span class="dues-caret">${collapsed ? "▸" : "▾"}</span>` +
 				`<span class="dues-group-title">${frappe.utils.escape_html(s.label)}</span>` +
 				`<span class="dues-dir dir-${(s.direction || "").toLowerCase()}">${__(s.direction)}</span>` +
-				`<span class="dues-group-total">${money(totals, 2)}` +
+				`<span class="dues-group-total">${money(totals)}` +
 				`<em>${__("{0} rows", [group.length])}</em></span></div>`;
 			if (!collapsed) html += `<div class="dues-rows">` + group.map(row_html).join("") + `</div>`;
 			html += `</div>`;
@@ -295,10 +299,12 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 				  }${r.snooze_until ? " · " + frappe.datetime.str_to_user(r.snooze_until) : ""}</span>`
 				: `<span class="dues-pill s-open">${__("Untouched")}</span>`;
 
-		const collecting = r.direction === "Receivable";
-		const pay_label = collecting ? __("Collect") : __("Pay");
-		const pay_icon = collecting ? "arrow-down" : "arrow-up";
-		const can_pay = state.data.can_make_payment_entry && r.direction !== "Instrument";
+		// Collect / Pay opened a Payment Entry straight off a due row, which skips the advice and
+		// its approval. The action is raising the Payment Advice instead; Follow up stays, because
+		// the state pills, the worklist chips and the daily reminders all hang off it.
+		const advice_doctypes = ["Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales Order"];
+		const can_advise =
+			state.data.can_make_payment_advice && advice_doctypes.includes(r.voucher_doctype);
 
 		return (
 			`<div class="dues-row" data-voucher="${e(r.voucher)}" data-doctype="${e(r.voucher_doctype)}">` +
@@ -316,7 +322,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 			`<div class="dues-cell dues-when"><span class="dues-date">${
 				r.due_date ? frappe.datetime.str_to_user(r.due_date) : "—"
 			}</span>${age}</div>` +
-			`<div class="dues-cell dues-amt">${format_currency(r.amount, r.currency, 2)}</div>` +
+			`<div class="dues-cell dues-amt">${format_currency(r.amount, r.currency)}</div>` +
 			`<div class="dues-cell dues-state">${pill}${
 				r.note
 					? `<span class="dues-note" title="${e(r.note)}">${frappe.utils.icon("small-message", "xs")}</span>`
@@ -325,9 +331,11 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 			`<div class="dues-cell dues-actions">` +
 			`<button class="dues-btn dues-followup" title="${__("Log a call, promise or snooze")}">` +
 			`${frappe.utils.icon("edit", "xs")}<span>${__("Follow up")}</span></button>` +
-			(can_pay
-				? `<button class="dues-btn is-primary dues-pay" title="${__("Open a Payment Entry for this voucher")}">` +
-				  `${frappe.utils.icon(pay_icon, "xs")}<span>${pay_label}</span></button>`
+			(can_advise
+				? `<button class="dues-btn is-primary dues-advice" title="${__(
+						"Raise a draft Payment Advice for this voucher"
+				  )}">` +
+				  `${frappe.utils.icon("small-file", "xs")}<span>${__("Payment Advice")}</span></button>`
 				: "") +
 			`</div></div>`
 		);
@@ -387,9 +395,9 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 			ev.stopPropagation();
 			follow_up_dialog(row_of(this));
 		});
-		$body.find(".dues-pay").on("click", function (ev) {
+		$body.find(".dues-advice").on("click", function (ev) {
 			ev.stopPropagation();
-			make_payment(row_of(this));
+			make_advice(row_of(this));
 		});
 	}
 
@@ -499,19 +507,34 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		d.show();
 	}
 
-	function make_payment(row) {
+	function make_advice(row) {
 		if (!row) return;
-		frappe.call({
-			method: "permission_manager.permission_manager.api.dues_inbox.make_payment_entry",
-			args: { voucher_doctype: row.voucher_doctype, voucher: row.voucher },
-			freeze: true,
-			freeze_message: __("Preparing payment…"),
-			callback(r) {
-				if (!r.message) return;
-				const doc = frappe.model.sync(r.message)[0];
-				frappe.set_route("Form", doc.doctype, doc.name);
-			},
-		});
+		frappe.confirm(
+			__("Raise a draft Payment Advice for {0} — {1}?", [
+				frappe.utils.escape_html(row.party || row.voucher),
+				format_currency(row.amount, row.currency),
+			]),
+			() => {
+				frappe.call({
+					method: "permission_manager.permission_manager.api.dues_inbox.make_payment_advice",
+					args: { voucher_doctype: row.voucher_doctype, voucher: row.voucher },
+					freeze: true,
+					freeze_message: __("Raising Payment Advice…"),
+					callback(r) {
+						const res = r.message;
+						if (!res || !res.advice) return;
+						frappe.show_alert(
+							{ message: __("Payment Advice {0} created", [res.advice]), indicator: "green" },
+							5
+						);
+						// the row's outstanding has not changed, but the advice now exists and a second
+						// attempt would be refused, so reload to keep the page honest
+						load();
+						frappe.set_route("Form", "Payment Advice", res.advice);
+					},
+				});
+			}
+		);
 	}
 
 	function dues_skeleton() {

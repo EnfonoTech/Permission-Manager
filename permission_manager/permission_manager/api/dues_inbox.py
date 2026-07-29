@@ -158,6 +158,7 @@ def get_dues_inbox(company=None, branch=None, as_on=None, source=None, due_from=
         "no_access_sources": no_access,
         "truncated": truncated,
         "can_make_payment_entry": frappe.has_permission("Payment Entry", "create"),
+        "can_make_payment_advice": _payment_advice_available(),
     }
 
 
@@ -353,9 +354,16 @@ def _kpis(rows):
     for row in live:
         entry = by_direction.setdefault(row["direction"], {"count": 0, "amounts": {}})
         entry["count"] += 1
+        # Every live row, not just the overdue ones. The card counted all of them and totalled only
+        # the overdue, so "To collect" read 43,981 over 518 vouchers while the group header for the
+        # same 518 rows read 48,431.36 - the gap being exactly the six not-yet-due vouchers. The
+        # not-due chip is there for anyone who wants them excluded.
+        cur = row["currency"] or ""
+        entry["amounts"][cur] = flt(entry["amounts"].get(cur)) + flt(row["amount"])
         if row["days_overdue"] >= 0:
-            cur = row["currency"] or ""
-            entry["amounts"][cur] = flt(entry["amounts"].get(cur)) + flt(row["amount"])
+            entry.setdefault("overdue_amounts", {})
+            entry["overdue_amounts"][cur] = flt(entry["overdue_amounts"].get(cur)) + flt(row["amount"])
+            entry["overdue_count"] = entry.get("overdue_count", 0) + 1
     return {
         "by_direction": by_direction,
         "total_rows": len(rows),
@@ -459,6 +467,65 @@ def save_follow_up(voucher_doctype, voucher, state, promised_date=None, snooze_u
     doc.save()
     frappe.db.commit()
     return {"name": doc.name, "state": doc.state, "snooze_until": str(doc.snooze_until or "")}
+
+
+def _payment_advice_available():
+    """True when this bench can raise a Payment Advice for a dues row.
+
+    permission_manager must keep working on a site without sf_trading, so the builder is looked up
+    rather than imported at module level, and the button simply does not render when it is absent.
+    """
+    if "sf_trading" not in frappe.get_installed_apps():
+        return False
+    if not frappe.db.exists("DocType", "Payment Advice"):
+        return False
+    if not frappe.has_permission("Payment Advice", "create"):
+        return False
+    try:
+        frappe.get_attr("sf_trading.api.payment_advice_builder.create_advices_from_documents")
+    except Exception:
+        return False
+    return True
+
+
+ADVICE_DOCTYPES = ("Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales Order")
+
+
+@frappe.whitelist()
+def make_payment_advice(voucher_doctype, voucher):
+    """Raise a draft Payment Advice for one dues row and hand back its name.
+
+    Same guards as make_payment_entry: the doctype has to be one of this user's dues sources, they
+    need create rights on Payment Advice and read rights on the voucher itself. The amount, the
+    party account and the ageing all come from sf_trading's builder, so a row raised here is
+    identical to one raised from the Payment Advice Builder page.
+    """
+    permitted = {s.voucher_doctype for s in _sources_for_user()}
+    if voucher_doctype not in permitted:
+        frappe.throw(
+            _("%s is not one of your dues sources.") % frappe.bold(voucher_doctype),
+            frappe.PermissionError,
+        )
+    if voucher_doctype not in ADVICE_DOCTYPES:
+        frappe.throw(
+            _("A Payment Advice cannot be raised against %s. It applies to invoices and orders.")
+            % frappe.bold(_(voucher_doctype))
+        )
+    if not _payment_advice_available():
+        frappe.throw(_("Payment Advice is not available on this site."))
+    frappe.has_permission("Payment Advice", "create", throw=True)
+    frappe.has_permission(voucher_doctype, "read", doc=voucher, throw=True)
+
+    builder = frappe.get_attr("sf_trading.api.payment_advice_builder.create_advices_from_documents")
+    result = builder([voucher], {"doctype": voucher_doctype}) or {}
+    created = result.get("created") or []
+    if not created:
+        # the builder reports why in its own message; keep that rather than inventing one
+        frappe.throw(_("No Payment Advice could be raised for %s.") % frappe.bold(voucher))
+    return {"advice": created[0].get("advice"), "party": created[0].get("party"),
+            "amount": created[0].get("amount"), "skipped": {
+                "already_advised": result.get("skipped_already_advised") or [],
+                "nothing_due": result.get("skipped_nothing_due") or []}}
 
 
 @frappe.whitelist()
