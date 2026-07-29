@@ -2,7 +2,7 @@
 """Dues Inbox: configuration drives the query, so configuration is what these tests attack.
 
 The dangerous property of this feature is that field names come from a DocType an admin edits.
-Tests below cover the honest cases (buckets, follow-up state, role scoping) and the dishonest
+Tests below cover the honest cases (buckets, advices already raised, role scoping) and the dishonest
 one — a source configured with a field name that does not exist, or one carrying SQL.
 """
 
@@ -15,7 +15,6 @@ from frappe.utils import add_days, nowdate, today
 from permission_manager.permission_manager.api.dues_inbox import (
     _bucket_of,
     get_dues_inbox,
-    save_follow_up,
 )
 
 SOURCE = "_Test Dues Source SI"
@@ -98,7 +97,7 @@ class TestDuesInboxConfig(FrappeTestCase):
             self.assertEqual(row["direction"], "Receivable")
             self.assertGreater(row["amount"], 0)
             self.assertIn(row["bucket"], ("not_due", "0-30", "31-60", "61-90", "90+"))
-            self.assertIn(row["worklist"], ("untouched", "promised", "snoozed", "touched"))
+            self.assertIsInstance(row["advices"], list)
 
     def test_disabled_source_disappears(self):
         src = _make_source()
@@ -134,7 +133,7 @@ class TestDuesInboxConfig(FrappeTestCase):
 
         data = get_dues_inbox()
 
-        live = [r for r in data["rows"] if not r["snoozed"]]
+        live = data["rows"]
         self.assertEqual(data["kpis"]["live_rows"], len(live))
         self.assertEqual(data["kpis"]["total_rows"], len(data["rows"]))
         self.assertEqual(
@@ -147,64 +146,6 @@ class TestDuesInboxConfig(FrappeTestCase):
             self.assertIsInstance(bucket["amounts"], dict)
 
     # ── follow-up state ───────────────────────────────────────────────────────
-    def test_follow_up_attaches_and_snooze_hides_the_row(self):
-        _make_source()
-        data = get_dues_inbox()
-        row = next((r for r in data["rows"] if r["source"] == SOURCE), None)
-        if not row:
-            return  # no outstanding invoice on this site to hang a follow-up on
-
-        save_follow_up(
-            voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-            state="Promised", promised_date=add_days(today(), 3), note="rang the customer",
-            source=SOURCE, party=row["party"], company=row["company"],
-        )
-        again = next(
-            r for r in get_dues_inbox()["rows"]
-            if r["voucher"] == row["voucher"] and r["source"] == SOURCE
-        )
-        self.assertEqual(again["state"], "Promised")
-        self.assertEqual(again["worklist"], "promised")
-        self.assertEqual(again["note"], "rang the customer")
-
-        save_follow_up(
-            voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-            state="Snoozed", snooze_until=add_days(today(), 5),
-        )
-        rows = get_dues_inbox()["rows"]
-        snoozed = next(r for r in rows if r["voucher"] == row["voucher"] and r["source"] == SOURCE)
-        self.assertTrue(snoozed["snoozed"])
-        self.assertEqual(snoozed["worklist"], "snoozed")
-        # and it drops out of every live tally
-        self.assertNotIn(row["voucher"], [
-            r["voucher"] for r in rows if not r["snoozed"] and r["source"] == SOURCE
-        ])
-
-        frappe.delete_doc(
-            "PM Dues Follow Up",
-            frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name"),
-            force=True,
-        )
-        frappe.db.commit()
-
-    def test_snooze_in_the_past_is_refused(self):
-        _make_source()
-        data = get_dues_inbox()
-        row = next((r for r in data["rows"] if r["source"] == SOURCE), None)
-        if not row:
-            return
-        with self.assertRaises(frappe.ValidationError):
-            save_follow_up(
-                voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                state="Snoozed", snooze_until=add_days(today(), -1),
-            )
-
-    def test_unknown_state_is_refused(self):
-        _make_source()
-        with self.assertRaises(frappe.ValidationError):
-            save_follow_up(voucher_doctype="Sales Invoice", voucher="NO-SUCH-INVOICE",
-                           state="Whatever")
-
     # ── bucket maths ──────────────────────────────────────────────────────────
     def test_field_with_no_column_is_refused(self):
         # a Table field passes meta.get_field() but has no column: accepting it saves cleanly and
@@ -252,90 +193,6 @@ class TestDuesInboxConfig(FrappeTestCase):
             frappe.delete_doc("PM Dues Source", src.name, force=True)
             frappe.db.commit()
 
-    def test_follow_up_on_a_voucher_type_that_is_not_a_source_is_refused(self):
-        # read access on some unrelated doctype must not be a way into writing follow-ups
-        _make_source()
-        with self.assertRaises(frappe.PermissionError):
-            save_follow_up(voucher_doctype="ToDo", voucher="whatever", state="Contacted")
-
-    def test_an_omitted_note_does_not_wipe_the_existing_one(self):
-        _make_source()
-        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
-        if not row:
-            return
-        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                       state="Contacted", note="spoke to accounts")
-        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                       state="Escalated")
-
-        again = next(r for r in get_dues_inbox()["rows"]
-                     if r["voucher"] == row["voucher"] and r["source"] == SOURCE)
-        self.assertEqual(again["note"], "spoke to accounts")
-        self.assertEqual(again["state"], "Escalated")
-
-        frappe.delete_doc("PM Dues Follow Up",
-                          frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name"),
-                          force=True)
-        frappe.db.commit()
-
-    def test_follow_up_is_named_after_its_voucher(self):
-        _make_source()
-        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
-        if not row:
-            return
-        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                       state="Contacted", note="named check")
-        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
-
-        self.assertEqual(name, "DUES-SI-" + row["voucher"],
-                         "follow-ups should be readable, not hashes")
-
-        frappe.delete_doc("PM Dues Follow Up", name, force=True)
-        frappe.db.commit()
-
-    def test_owner_gets_a_real_assignment(self):
-        # "Owned By" used to be a name in a column that told nobody anything
-        _make_source()
-        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
-        other = frappe.db.get_value("User", {"name": ["not in", ["Administrator", "Guest"]],
-                                             "enabled": 1}, "name")
-        if not row or not other:
-            return
-        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                       state="Contacted", owner_user=other)
-        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
-
-        todos = frappe.get_all("ToDo", filters={"reference_type": "PM Dues Follow Up",
-                                                "reference_name": name, "allocated_to": other,
-                                                "status": ["!=", "Cancelled"]})
-        self.assertTrue(todos, "assigning an owner did not create their ToDo")
-
-        frappe.delete_doc("PM Dues Follow Up", name, force=True)
-        frappe.db.commit()
-
-    def test_expired_snooze_is_reopened_by_the_daily_job(self):
-        from permission_manager.permission_manager.api.dues_reminders import reopen_expired_snoozes
-
-        _make_source()
-        row = next((r for r in get_dues_inbox()["rows"] if r["source"] == SOURCE), None)
-        if not row:
-            return
-        save_follow_up(voucher_doctype=row["voucher_doctype"], voucher=row["voucher"],
-                       state="Snoozed", snooze_until=add_days(today(), 3))
-        name = frappe.db.get_value("PM Dues Follow Up", {"voucher": row["voucher"]}, "name")
-        # move the date into the past the way time would
-        frappe.db.set_value("PM Dues Follow Up", name, "snooze_until", add_days(today(), -1),
-                            update_modified=False)
-
-        reopen_expired_snoozes()
-
-        doc = frappe.get_doc("PM Dues Follow Up", name)
-        self.assertEqual(doc.state, "Open", "an expired snooze must come back as work to do")
-        self.assertFalse(doc.snooze_until)
-
-        frappe.delete_doc("PM Dues Follow Up", name, force=True)
-        frappe.db.commit()
-
     def test_bucket_boundaries(self):
         self.assertEqual(_bucket_of(-1), "not_due")
         self.assertEqual(_bucket_of(0), "0-30")
@@ -345,3 +202,58 @@ class TestDuesInboxConfig(FrappeTestCase):
         self.assertEqual(_bucket_of(61), "61-90")
         self.assertEqual(_bucket_of(90), "61-90")
         self.assertEqual(_bucket_of(91), "90+")
+
+
+class TestDuesInboxAdvices(FrappeTestCase):
+    """The row shows any Payment Advice already raised, and refuses to raise a second one."""
+
+    def test_every_row_carries_an_advices_list(self):
+        data = get_dues_inbox()
+        for row in data["rows"]:
+            self.assertIn("advices", row)
+            self.assertIsInstance(row["advices"], list)
+
+    def test_flag_matches_what_the_bench_can_actually_do(self):
+        from permission_manager.permission_manager.api.dues_inbox import _payment_advice_available
+
+        data = get_dues_inbox()
+        self.assertEqual(bool(data["can_make_payment_advice"]), bool(_payment_advice_available()))
+
+    def test_an_existing_advice_shows_on_its_voucher(self):
+        from permission_manager.permission_manager.api.dues_inbox import _payment_advice_available
+
+        if not _payment_advice_available():
+            self.skipTest("Payment Advice is not available on this bench")
+        ref = frappe.db.sql(
+            """select r.reference_doctype, r.reference_record, r.parent
+               from `tabPayment Advice Reference` r
+               where r.parenttype='Payment Advice' and r.docstatus < 2 limit 1""",
+            as_dict=True,
+        )
+        if not ref:
+            self.skipTest("no live Payment Advice on this site")
+        ref = ref[0]
+        rows = get_dues_inbox()["rows"]
+        row = next(
+            (r for r in rows if r["voucher"] == ref.reference_record
+             and r["voucher_doctype"] == ref.reference_doctype),
+            None,
+        )
+        if not row:
+            self.skipTest("that voucher is not currently a due row")
+        self.assertIn(ref.parent, [a["advice"] for a in row["advices"]])
+
+    def test_advice_is_refused_on_a_doctype_that_is_not_a_source(self):
+        from permission_manager.permission_manager.api.dues_inbox import make_payment_advice
+
+        with self.assertRaises(frappe.PermissionError):
+            make_payment_advice("Journal Entry", "whatever")
+
+    def test_advice_is_refused_on_an_instrument_row(self):
+        from permission_manager.permission_manager.api.dues_inbox import make_payment_advice
+
+        # Payment Entry is a dues source (post-dated cheques) but an advice cannot be raised on one
+        if not frappe.db.exists("PM Dues Source", {"voucher_doctype": "Payment Entry"}):
+            self.skipTest("no Payment Entry dues source configured")
+        with self.assertRaises(frappe.ValidationError):
+            make_payment_advice("Payment Entry", "whatever")

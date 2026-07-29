@@ -1,5 +1,5 @@
 // permission_manager/permission_manager/page/pm_dues_inbox/pm_dues_inbox.js
-// Dues Inbox — everything falling due in one worklist, built from PM Dues Source rows.
+// Dues Inbox — everything falling due in one list, built from PM Dues Source rows.
 // The API returns the whole scoped set once; every chip filters in memory so the page feels
 // instant and an accountant can pivot without a round trip.
 //
@@ -17,7 +17,6 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		data: null,
 		source: null,
 		bucket: null,
-		worklist: null,
 		search: "",
 		collapsed: {},
 	};
@@ -95,20 +94,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		const d = state.data;
 		if (!d) return [];
 		let rows = d.rows || [];
-		// snoozed rows are out of the way unless the snoozed chip is picked
-		rows = state.worklist === "snoozed" ? rows.filter((r) => r.snoozed) : rows.filter((r) => !r.snoozed);
-		if (state.source) rows = rows.filter((r) => r.source === state.source);
 		if (state.bucket) rows = rows.filter((r) => r.bucket === state.bucket);
-		if (state.worklist && state.worklist !== "snoozed") {
-			if (state.worklist === "due_today") {
-				rows = rows.filter((r) => r.days_overdue === 0);
-			} else if (state.worklist === "mine") {
-				// an overlay, not a bucket: my rows whatever state they are in
-				rows = rows.filter((r) => r.owner_user === frappe.session.user);
-			} else {
-				rows = rows.filter((r) => r.worklist === state.worklist);
-			}
-		}
 		if (state.search) {
 			const q = state.search.toLowerCase();
 			rows = rows.filter(
@@ -188,7 +174,7 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 	}
 
 	function chip_bars(d) {
-		const live = (d.rows || []).filter((r) => !r.snoozed);
+		const live = d.rows || [];
 		const counts = {};
 		live.forEach((r) => (counts[r.source] = (counts[r.source] || 0) + 1));
 
@@ -211,30 +197,10 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 				null, money(entry.amounts), __("Days past due"));
 		});
 
-		const w = d.worklists || {};
-		// "Untouched" earns a chip only when it differs from "Everything" — before anyone logs a
-		// follow-up the two are the same number, and two chips with one meaning is just noise.
-		const work = [
-			["", __("Everything"), live.length, __("No follow-up filter")],
-			["mine", __("Mine"), w.mine, __("Follow-ups you own")],
-			["untouched", __("Untouched"), w.untouched, __("Nothing logged against these yet")],
-			["due_today", __("Due today"), w.due_today, __("Falls due exactly today")],
-			["promised", __("Promised"), w.promised, __("Party promised a date")],
-			["touched", __("In progress"), w.touched, __("Contacted, disputed or escalated")],
-			["snoozed", __("Snoozed"), w.snoozed, __("Hidden until their snooze date")],
-		];
-		let work_chips = "";
-		work.forEach(([key, label, count, tip]) => {
-			if (key && !count) return;
-			if (key === "untouched" && count === live.length) return;
-			work_chips += chip(key, label, count, (state.worklist || "") === key, "worklist", null,
-				null, tip);
-		});
-
 		return (
 			`<div class="dues-bars">` +
 			`<div class="dues-bar">${src_chips}</div>` +
-			`<div class="dues-bar dues-bar-sub">${work_chips}<span class="dues-bar-div"></span>${bucket_chips}` +
+			`<div class="dues-bar dues-bar-sub">${bucket_chips}` +
 			`<input class="dues-search" type="text" placeholder="${__("Search party, voucher or branch")}" ` +
 			`value="${frappe.utils.escape_html(state.search)}">` +
 			`</div></div>`
@@ -292,19 +258,30 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 						overdue === 0 ? __("due today") : __("{0}d late", [overdue])
 				  }</span>`;
 
-		const pill =
-			r.state && r.state !== "Open"
-				? `<span class="dues-pill s-${r.state.toLowerCase()}">${__(r.state)}${
-						r.promised_date ? " · " + frappe.datetime.str_to_user(r.promised_date) : ""
-				  }${r.snooze_until ? " · " + frappe.datetime.str_to_user(r.snooze_until) : ""}</span>`
-				: `<span class="dues-pill s-open">${__("Untouched")}</span>`;
+		// The slot that used to carry follow-up state now says whether an advice already exists.
+		// Knowing that at a glance is the point: it stops a second advice being raised for a voucher
+		// somebody is already dealing with.
+		const advices = r.advices || [];
+		const pill = advices.length
+			? advices
+					.map(
+						(a) =>
+							`<a class="dues-pill s-advice" href="/app/payment-advice/${encodeURIComponent(
+								a.advice
+							)}" title="${__("Payment Advice already raised — {0}", [a.status])}">` +
+							`${frappe.utils.icon("small-file", "xs")} ${e(a.advice)} · ${e(a.status)}</a>`
+					)
+					.join(" ")
+			: `<span class="dues-pill s-open">${__("No advice")}</span>`;
 
-		// Collect / Pay opened a Payment Entry straight off a due row, which skips the advice and
-		// its approval. The action is raising the Payment Advice instead; Follow up stays, because
-		// the state pills, the worklist chips and the daily reminders all hang off it.
+		// Collect / Pay opened a Payment Entry straight off a due row, which skips the advice and its
+		// approval. Raising the Payment Advice is the action instead, and it is offered only where
+		// there is not already one against the voucher.
 		const advice_doctypes = ["Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales Order"];
 		const can_advise =
-			state.data.can_make_payment_advice && advice_doctypes.includes(r.voucher_doctype);
+			state.data.can_make_payment_advice &&
+			advice_doctypes.includes(r.voucher_doctype) &&
+			!advices.length;
 
 		return (
 			`<div class="dues-row" data-voucher="${e(r.voucher)}" data-doctype="${e(r.voucher_doctype)}">` +
@@ -312,25 +289,13 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 			`<span class="dues-party-name">${e(r.party || r.voucher)}</span>` +
 			`<span class="dues-meta"><a href="/app/${frappe.router.slug(r.voucher_doctype)}/${encodeURIComponent(
 				r.voucher
-			)}">${e(r.voucher)}</a>${r.branch ? ` <span class="dues-tag">${e(r.branch)}</span>` : ""}${
-				r.owner_user ? " · " + e(r.owner_user.split("@")[0]) : ""
-			}${
-				r.last_contacted
-					? " · " + __("touched {0}", [frappe.datetime.comment_when(r.last_contacted)])
-					: ""
-			}</span></div>` +
+			)}">${e(r.voucher)}</a>${r.branch ? ` <span class="dues-tag">${e(r.branch)}</span>` : ""}</span></div>` +
 			`<div class="dues-cell dues-when"><span class="dues-date">${
 				r.due_date ? frappe.datetime.str_to_user(r.due_date) : "—"
 			}</span>${age}</div>` +
 			`<div class="dues-cell dues-amt">${format_currency(r.amount, r.currency)}</div>` +
-			`<div class="dues-cell dues-state">${pill}${
-				r.note
-					? `<span class="dues-note" title="${e(r.note)}">${frappe.utils.icon("small-message", "xs")}</span>`
-					: ""
-			}</div>` +
+			`<div class="dues-cell dues-state">${pill}</div>` +
 			`<div class="dues-cell dues-actions">` +
-			`<button class="dues-btn dues-followup" title="${__("Log a call, promise or snooze")}">` +
-			`${frappe.utils.icon("edit", "xs")}<span>${__("Follow up")}</span></button>` +
 			(can_advise
 				? `<button class="dues-btn is-primary dues-advice" title="${__(
 						"Raise a draft Payment Advice for this voucher"
@@ -385,16 +350,12 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		});
 
 		$body.find(".dues-clear").on("click", () => {
-			state.source = state.bucket = state.worklist = null;
+			state.source = state.bucket = null;
 			state.search = "";
 			render();
 		});
 		$body.find(".dues-configure").on("click", () => frappe.set_route("List", "PM Dues Source"));
 
-		$body.find(".dues-followup").on("click", function (ev) {
-			ev.stopPropagation();
-			follow_up_dialog(row_of(this));
-		});
 		$body.find(".dues-advice").on("click", function (ev) {
 			ev.stopPropagation();
 			make_advice(row_of(this));
@@ -421,90 +382,6 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 			);
 		}
 		return row;
-	}
-
-	function follow_up_dialog(row) {
-		if (!row) return;
-		const d = new frappe.ui.Dialog({
-			title: __("Follow up on {0}", [row.voucher]),
-			fields: [
-				{
-					fieldtype: "HTML",
-					options:
-						`<div class="dues-dialog-head"><b>${frappe.utils.escape_html(row.party || "")}</b>` +
-						`<span>${format_currency(row.amount, row.currency, 2)} · ${
-							row.days_overdue >= 0
-								? __("{0} days late", [row.days_overdue])
-								: __("not yet due")
-						}${
-							row.last_contacted
-								? " · " + __("last touched {0}", [frappe.datetime.comment_when(row.last_contacted)])
-								: ""
-						}</span></div>`,
-				},
-				{
-					fieldname: "state",
-					label: __("State"),
-					fieldtype: "Select",
-					reqd: 1,
-					default: row.state || "Open",
-					options: ["Open", "Contacted", "Promised", "Snoozed", "Disputed", "Escalated",
-						"Settled"].join("\n"),
-				},
-				{
-					fieldname: "promised_date",
-					label: __("Promised Date"),
-					fieldtype: "Date",
-					default: row.promised_date || null,
-					depends_on: "eval:doc.state=='Promised'",
-					mandatory_depends_on: "eval:doc.state=='Promised'",
-				},
-				{
-					fieldname: "snooze_until",
-					label: __("Snooze Until"),
-					fieldtype: "Date",
-					default: row.snooze_until || null,
-					depends_on: "eval:doc.state=='Snoozed'",
-					mandatory_depends_on: "eval:doc.state=='Snoozed'",
-					description: __("Hidden from the worklist until this date"),
-				},
-				{
-					fieldname: "owner_user",
-					label: __("Owned By"),
-					fieldtype: "Link",
-					options: "User",
-					default: row.owner_user || frappe.session.user,
-				},
-				{ fieldname: "note", label: __("Note"), fieldtype: "Small Text",
-				  default: row.note || "" },
-			],
-			primary_action_label: __("Save"),
-			primary_action(v) {
-				frappe.call({
-					method: "permission_manager.permission_manager.api.dues_inbox.save_follow_up",
-					args: {
-						voucher_doctype: row.voucher_doctype,
-						voucher: row.voucher,
-						source: row.source,
-						party: row.party,
-						party_type: row.party_type,
-						company: row.company,
-						state: v.state,
-						promised_date: v.promised_date,
-						snooze_until: v.snooze_until,
-						note: v.note,
-						owner_user: v.owner_user,
-					},
-					freeze: true,
-					callback() {
-						d.hide();
-						frappe.show_alert({ message: __("Follow-up saved"), indicator: "green" }, 4);
-						load();
-					},
-				});
-			},
-		});
-		d.show();
 	}
 
 	function make_advice(row) {
@@ -633,14 +510,12 @@ function dues_styles() {
 .dues-state { display: flex; align-items: center; gap: 5px; }
 .dues-pill { font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 10px;
   background: var(--bg-color); color: var(--text-muted); white-space: nowrap; }
-.dues-pill.s-promised { background: #E6F1FB; color: #185FA5; }
-.dues-pill.s-contacted { background: #FAEEDA; color: #854F0B; }
-.dues-pill.s-snoozed { background: var(--control-bg); color: var(--text-muted); }
-.dues-pill.s-disputed, .dues-pill.s-escalated { background: #FCEBEB; color: #A32D2D; }
-.dues-pill.s-settled { background: #EAF3DE; color: #3B6D11; }
 .dues-note { color: var(--text-muted); cursor: help; }
 
 .dues-actions { display: flex; gap: 6px; }
+.dues-pill.s-advice { text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(29,158,117,.12); color: #0F6B4F; border: 1px solid rgba(29,158,117,.35); }
+.dues-pill.s-advice:hover { background: rgba(29,158,117,.2); }
 .dues-btn { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
   padding: 5px 11px; border-radius: 8px; border: 1px solid var(--border-color);
   background: var(--card-bg); color: var(--text-color); cursor: pointer; white-space: nowrap;
@@ -662,10 +537,6 @@ function dues_styles() {
 @keyframes dues-pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
 
 @media (prefers-color-scheme: dark) {
-  .dues-pill.s-promised { background: rgba(55,138,221,.18); color: #85B7EB; }
-  .dues-pill.s-contacted { background: rgba(186,117,23,.18); color: #EF9F27; }
-  .dues-pill.s-disputed, .dues-pill.s-escalated { background: rgba(226,75,74,.18); color: #F09595; }
-  .dues-pill.s-settled { background: rgba(99,153,34,.18); color: #97C459; }
   .dues-dir.dir-receivable { color: #5DCAA5; }
   .dues-dir.dir-payable { color: #F0997B; }
   .dues-dir.dir-instrument { color: #AFA9EC; }

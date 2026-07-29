@@ -153,8 +153,6 @@ accounting_dimension_doctypes = ["PM Workflow"]
 scheduler_events = {
     "daily": [
         "permission_manager.permission_manager.api.approvals.send_approval_reminders",
-        # ends snoozes whose date has passed and chases promises that have come due
-        "permission_manager.permission_manager.api.dues_reminders.send_dues_reminders",
     ],
 }
 

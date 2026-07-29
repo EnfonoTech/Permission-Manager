@@ -27,9 +27,6 @@ from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate, today
 
 BUCKET_KEYS = ("not_due", "0-30", "31-60", "61-90", "90+")
-WORKLISTS = ("untouched", "promised", "snoozed", "due_today", "touched", "mine")
-ACTIVE_STATES = ("Open", "Contacted", "Promised", "Snoozed", "Disputed", "Escalated", "Settled")
-OWNER_OVERRIDE_ROLES = ("Accounts Manager", "System Manager")
 
 # Per source. A site with years of open vouchers must not ship every one of them to a browser;
 # the page says how many it is showing out of how many exist.
@@ -105,7 +102,7 @@ def _sources_for_user():
 
 @frappe.whitelist()
 def get_dues_inbox(company=None, branch=None, as_on=None, source=None, due_from=None, due_to=None):
-    """Every due row this user may see, with follow-up state attached.
+    """Every due row this user may see, with any Payment Advice already raised against it.
 
     Chips filter in the page so they feel instant; this returns the scoped set once, with counts
     tallied per currency.
@@ -138,7 +135,7 @@ def get_dues_inbox(company=None, branch=None, as_on=None, source=None, due_from=
             skipped.append({"source": src.name, "reason": str(e)[:200]})
 
     sources = [s for s in sources if s.name not in no_access]
-    _attach_follow_ups(rows)
+    _attach_advices(rows)
     rows.sort(key=lambda r: (-cint(r["days_overdue"]), -flt(r["amount"])))
 
     return {
@@ -153,11 +150,9 @@ def get_dues_inbox(company=None, branch=None, as_on=None, source=None, due_from=
         "rows": rows,
         "kpis": _kpis(rows),
         "buckets": _bucket_counts(rows),
-        "worklists": _worklist_counts(rows),
         "skipped_sources": skipped,
         "no_access_sources": no_access,
         "truncated": truncated,
-        "can_make_payment_entry": frappe.has_permission("Payment Entry", "create"),
         "can_make_payment_advice": _payment_advice_available(),
     }
 
@@ -299,57 +294,62 @@ def _bucket_of(days):
     return "90+"
 
 
-# ── follow-up state ───────────────────────────────────────────────────────────
+# ── advices already raised ────────────────────────────────────────────────────
 
-def _attach_follow_ups(rows):
-    if not rows:
+def _attach_advices(rows):
+    """Hang any live Payment Advice on each row.
+
+    Seeing "PA-26-0014 · Draft" on the row is the quickest way to know the voucher is already being
+    dealt with, and it stops a second advice being raised for it - which the builder would refuse
+    anyway, but only after the user had tried. Cancelled advices are ignored; a draft is shown,
+    because a draft is exactly the state someone else is mid-way through.
+    """
+    if not rows or not _payment_advice_available():
         return
+    for row in rows:
+        row["advices"] = []
     vouchers = list({r["voucher"] for r in rows})
-    follow_ups = {}
-    # get_list, so a user who cannot read follow-ups simply sees none
     try:
-        existing = frappe.get_list(
-            "PM Dues Follow Up",
-            filters={"voucher": ["in", vouchers]},
-            fields=["name", "voucher_doctype", "voucher", "state", "promised_date", "snooze_until",
-                    "owner_user", "last_contacted", "note"],
+        refs = frappe.get_all(
+            "Payment Advice Reference",
+            filters={"reference_record": ["in", vouchers], "parenttype": "Payment Advice",
+                     "docstatus": ["<", 2]},
+            fields=["reference_record", "reference_doctype", "parent"],
             limit_page_length=0,
         )
     except frappe.PermissionError:
-        existing = []
-    for fu in existing:
-        follow_ups[(fu.voucher_doctype, fu.voucher)] = fu
+        return
+    if not refs:
+        return
+
+    heads = {}
+    for h in frappe.get_all(
+        "Payment Advice",
+        filters={"name": ["in", list({r.parent for r in refs})]},
+        fields=["name", "docstatus", "status", "payment_amount", "transaction_date"],
+        limit_page_length=0,
+    ):
+        heads[h.name] = h
+
+    by_voucher = {}
+    for r in refs:
+        head = heads.get(r.parent)
+        if not head:
+            continue
+        by_voucher.setdefault((r.reference_doctype, r.reference_record), []).append({
+            "advice": head.name,
+            "status": head.status or ("Submitted" if cint(head.docstatus) == 1 else "Draft"),
+            "docstatus": cint(head.docstatus),
+            "amount": flt(head.payment_amount),
+            "date": str(head.transaction_date or ""),
+        })
 
     for row in rows:
-        fu = follow_ups.get((row["voucher_doctype"], row["voucher"]))
-        row["follow_up"] = fu.name if fu else None
-        row["state"] = fu.state if fu else "Open"
-        row["promised_date"] = str(fu.promised_date) if fu and fu.promised_date else ""
-        row["snooze_until"] = str(fu.snooze_until) if fu and fu.snooze_until else ""
-        row["owner_user"] = fu.owner_user if fu else ""
-        row["note"] = fu.note if fu else ""
-        row["last_contacted"] = str(fu.last_contacted) if fu and fu.last_contacted else ""
-        row["snoozed"] = bool(
-            fu and fu.state == "Snoozed" and fu.snooze_until
-            and getdate(fu.snooze_until) > getdate(today())
-        )
-        row["worklist"] = _worklist_of(row)
+        row["advices"] = by_voucher.get((row["voucher_doctype"], row["voucher"]), [])
 
-
-def _worklist_of(row):
-    if row["snoozed"]:
-        return "snoozed"
-    if row["state"] == "Promised":
-        return "promised"
-    if row["state"] == "Open":
-        return "untouched"
-    return "touched"
-
-
-# ── tallies, always per currency ──────────────────────────────────────────────
 
 def _kpis(rows):
-    live = [r for r in rows if not r["snoozed"]]
+    live = rows
     by_direction = {}
     for row in live:
         entry = by_direction.setdefault(row["direction"], {"count": 0, "amounts": {}})
@@ -377,27 +377,10 @@ def _kpis(rows):
 def _bucket_counts(rows):
     counts = {key: {"count": 0, "amounts": {}} for key in BUCKET_KEYS}
     for row in rows:
-        if row["snoozed"]:
-            continue
         entry = counts.setdefault(row["bucket"], {"count": 0, "amounts": {}})
         entry["count"] += 1
         cur = row["currency"] or ""
         entry["amounts"][cur] = flt(entry["amounts"].get(cur)) + flt(row["amount"])
-    return counts
-
-
-def _worklist_counts(rows):
-    """Chip counts. due_today and mine are overlays on the others, not exclusive buckets."""
-    counts = {key: 0 for key in WORKLISTS}
-    me = frappe.session.user
-    for row in rows:
-        counts[row["worklist"]] = counts.get(row["worklist"], 0) + 1
-        if row["snoozed"]:
-            continue
-        if row["days_overdue"] == 0:
-            counts["due_today"] += 1
-        if row["owner_user"] == me:
-            counts["mine"] += 1
     return counts
 
 
@@ -416,58 +399,6 @@ def _company_currency(company=None):
 
 
 # ── actions ───────────────────────────────────────────────────────────────────
-
-@frappe.whitelist()
-def save_follow_up(voucher_doctype, voucher, state, promised_date=None, snooze_until=None,
-                   note=None, owner_user=None, source=None, party=None, party_type=None,
-                   company=None):
-    """Record what was agreed on one voucher.
-
-    Authorisation, in order: the state must be one we know, the voucher type must be one this
-    user's own sources cover (so read access on some unrelated doctype is not a way in), the user
-    must be able to read the voucher, and then the save runs through normal permissions — no
-    ignore_permissions, so the DocPerms and User Permissions on PM Dues Follow Up apply.
-    """
-    if state not in ACTIVE_STATES:
-        frappe.throw(_("%s is not a follow-up state.") % frappe.bold(state))
-
-    permitted = {s.voucher_doctype for s in _sources_for_user()}
-    if voucher_doctype not in permitted:
-        frappe.throw(
-            _("%s is not one of your dues sources.") % frappe.bold(voucher_doctype),
-            frappe.PermissionError,
-        )
-    frappe.has_permission(voucher_doctype, "read", doc=voucher, throw=True)
-
-    if owner_user and owner_user != frappe.session.user:
-        # reassigning someone else's chase is a supervisor's job
-        if not set(OWNER_OVERRIDE_ROLES) & set(frappe.get_roles()):
-            frappe.throw(_("Only Accounts Manager can hand a follow-up to someone else."),
-                         frappe.PermissionError)
-
-    name = frappe.db.get_value(
-        "PM Dues Follow Up", {"voucher_doctype": voucher_doctype, "voucher": voucher}, "name"
-    )
-    doc = frappe.get_doc("PM Dues Follow Up", name) if name else frappe.new_doc("PM Dues Follow Up")
-    doc.update({
-        "voucher_doctype": voucher_doctype,
-        "voucher": voucher,
-        "source": source or doc.get("source"),
-        "party": party or doc.get("party"),
-        "party_type": party_type or doc.get("party_type"),
-        "company": company or doc.get("company"),
-        "state": state,
-        "promised_date": promised_date or None,
-        "snooze_until": snooze_until or None,
-        "owner_user": owner_user or doc.get("owner_user") or frappe.session.user,
-    })
-    # an omitted note must not wipe what a colleague wrote
-    if note is not None:
-        doc.note = note
-    doc.save()
-    frappe.db.commit()
-    return {"name": doc.name, "state": doc.state, "snooze_until": str(doc.snooze_until or "")}
-
 
 def _payment_advice_available():
     """True when this bench can raise a Payment Advice for a dues row.
@@ -495,7 +426,7 @@ ADVICE_DOCTYPES = ("Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales
 def make_payment_advice(voucher_doctype, voucher):
     """Raise a draft Payment Advice for one dues row and hand back its name.
 
-    Same guards as make_payment_entry: the doctype has to be one of this user's dues sources, they
+    Guards: the doctype has to be one of this user's dues sources, they
     need create rights on Payment Advice and read rights on the voucher itself. The amount, the
     party account and the ageing all come from sf_trading's builder, so a row raised here is
     identical to one raised from the Payment Advice Builder page.
@@ -526,19 +457,3 @@ def make_payment_advice(voucher_doctype, voucher):
             "amount": created[0].get("amount"), "skipped": {
                 "already_advised": result.get("skipped_already_advised") or [],
                 "nothing_due": result.get("skipped_nothing_due") or []}}
-
-
-@frappe.whitelist()
-def make_payment_entry(voucher_doctype, voucher):
-    """Hand back a Payment Entry for this voucher, using ERPNext's own builder."""
-    permitted = {s.voucher_doctype for s in _sources_for_user()}
-    if voucher_doctype not in permitted:
-        frappe.throw(
-            _("%s is not one of your dues sources.") % frappe.bold(voucher_doctype),
-            frappe.PermissionError,
-        )
-    frappe.has_permission("Payment Entry", "create", throw=True)
-    frappe.has_permission(voucher_doctype, "read", doc=voucher, throw=True)
-    from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-
-    return get_payment_entry(voucher_doctype, voucher).as_dict()
