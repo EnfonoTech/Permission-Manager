@@ -91,23 +91,8 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 	// ── filtering ─────────────────────────────────────────────────────────────
 
 	function visible_rows() {
-		const d = state.data;
-		if (!d) return [];
-		let rows = d.rows || [];
-		// the stream chip. This filter was lost when the snooze line directly above it was stripped
-		// out with the follow-up feature, which left every chip highlighting but filtering nothing.
-		if (state.source) rows = rows.filter((r) => r.source === state.source);
-		if (state.bucket) rows = rows.filter((r) => r.bucket === state.bucket);
-		if (state.search) {
-			const q = state.search.toLowerCase();
-			rows = rows.filter(
-				(r) =>
-					(r.party || "").toLowerCase().includes(q) ||
-					(r.voucher || "").toLowerCase().includes(q) ||
-					(r.branch || "").toLowerCase().includes(q)
-			);
-		}
-		return rows;
+		if (!state.data) return [];
+		return rows_matching(null);
 	}
 
 	// ── render ────────────────────────────────────────────────────────────────
@@ -176,28 +161,58 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		);
 	}
 
-	function chip_bars(d) {
-		const live = d.rows || [];
-		const counts = {};
-		live.forEach((r) => (counts[r.source] = (counts[r.source] || 0) + 1));
+	// Each chip counts what it would actually give you, with the OTHER filters already applied. The
+	// ageing chips used to carry the server-side tally over every row, so picking Cheques maturing
+	// left them reading 332 / 128 / 92 for the whole inbox while the list showed 29 cheques.
+	function rows_matching(ignore) {
+		const d = state.data;
+		let rows = d.rows || [];
+		if (ignore !== "source" && state.source) rows = rows.filter((r) => r.source === state.source);
+		if (ignore !== "bucket" && state.bucket) rows = rows.filter((r) => r.bucket === state.bucket);
+		if (state.search) {
+			const q = state.search.toLowerCase();
+			rows = rows.filter(
+				(r) =>
+					(r.party || "").toLowerCase().includes(q) ||
+					(r.voucher || "").toLowerCase().includes(q) ||
+					(r.branch || "").toLowerCase().includes(q)
+			);
+		}
+		return rows;
+	}
 
-		let src_chips = chip("", __("All streams"), live.length, !state.source, "source", null, null,
-			__("Every stream you have access to"));
+	function totals_by_currency(rows) {
+		const out = {};
+		rows.forEach((r) => (out[r.currency || ""] = (out[r.currency || ""] || 0) + (r.amount || 0)));
+		return out;
+	}
+
+	function chip_bars(d) {
+		const for_streams = rows_matching("source");
+		const counts = {};
+		for_streams.forEach((r) => (counts[r.source] = (counts[r.source] || 0) + 1));
+
+		let src_chips = chip("", __("All streams"), for_streams.length, !state.source, "source", null,
+			null, __("Every stream you have access to"));
 		(d.sources || []).forEach((s) => {
 			src_chips += chip(s.name, s.label, counts[s.name] || 0, state.source === s.name, "source",
 				s.accent, null, __("{0} — {1}", [s.voucher_doctype, __(s.direction)]));
 		});
 
-		const b = d.buckets || {};
+		const for_buckets = rows_matching("bucket");
+		const by_bucket = {};
+		for_buckets.forEach((r) => (by_bucket[r.bucket] = by_bucket[r.bucket] || []).push(r));
 		const bucket_label = { not_due: __("Not due"), "0-30": "0-30", "31-60": "31-60",
 			"61-90": "61-90", "90+": "90+" };
 		let bucket_chips = chip("", __("Any age"), null, !state.bucket, "bucket", null, null,
 			__("No ageing filter"));
 		Object.keys(bucket_label).forEach((key) => {
-			const entry = b[key] || {};
-			if (!entry.count) return;
-			bucket_chips += chip(key, bucket_label[key], entry.count, state.bucket === key, "bucket",
-				null, money(entry.amounts), __("Days past due"));
+			const group = by_bucket[key];
+			// a bucket that is empty under the current stream says nothing worth a chip, but the one
+			// you are standing in must stay on screen or you cannot get back out of it
+			if (!group && state.bucket !== key) return;
+			bucket_chips += chip(key, bucket_label[key], (group || []).length, state.bucket === key,
+				"bucket", null, money(totals_by_currency(group || [])), __("Days past due"));
 		});
 
 		return (
@@ -265,6 +280,10 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		// Knowing that at a glance is the point: it stops a second advice being raised for a voucher
 		// somebody is already dealing with.
 		const advices = r.advices || [];
+		const advice_doctypes = ["Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales Order"];
+		// a cheque is not something you raise an advice against, so "No advice" on an instrument row
+		// is a label with no action behind it
+		const advisable = advice_doctypes.includes(r.voucher_doctype);
 		const pill = advices.length
 			? advices
 					.map(
@@ -275,16 +294,14 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 							`${frappe.utils.icon("small-file", "xs")} ${e(a.advice)} · ${e(a.status)}</a>`
 					)
 					.join(" ")
-			: `<span class="dues-pill s-open">${__("No advice")}</span>`;
+			: advisable
+			? `<span class="dues-pill s-open">${__("No advice")}</span>`
+			: "";
 
 		// Collect / Pay opened a Payment Entry straight off a due row, which skips the advice and its
 		// approval. Raising the Payment Advice is the action instead, and it is offered only where
 		// there is not already one against the voucher.
-		const advice_doctypes = ["Sales Invoice", "Purchase Invoice", "Purchase Order", "Sales Order"];
-		const can_advise =
-			state.data.can_make_payment_advice &&
-			advice_doctypes.includes(r.voucher_doctype) &&
-			!advices.length;
+		const can_advise = state.data.can_make_payment_advice && advisable && !advices.length;
 
 		return (
 			`<div class="dues-row" data-voucher="${e(r.voucher)}" data-doctype="${e(r.voucher_doctype)}">` +
