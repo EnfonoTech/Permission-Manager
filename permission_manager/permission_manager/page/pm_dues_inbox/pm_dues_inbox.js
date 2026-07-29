@@ -94,6 +94,9 @@ frappe.pages["pm-dues-inbox"].on_page_load = function (wrapper) {
 		const d = state.data;
 		if (!d) return [];
 		let rows = d.rows || [];
+		// the stream chip. This filter was lost when the snooze line directly above it was stripped
+		// out with the follow-up feature, which left every chip highlighting but filtering nothing.
+		if (state.source) rows = rows.filter((r) => r.source === state.source);
 		if (state.bucket) rows = rows.filter((r) => r.bucket === state.bucket);
 		if (state.search) {
 			const q = state.search.toLowerCase();
