@@ -494,7 +494,12 @@ function dues_styles() {
 .dues-group-total em { display: block; font-style: normal; font-size: 10px; font-weight: 400;
   color: var(--text-muted); }
 
-.dues-row { display: grid; grid-template-columns: minmax(0,2.4fr) 1fr 1.1fr 1.1fr auto;
+/* Fixed tracks, not fr, and a reserved actions column. With "auto" on the last track a row whose
+   button had been replaced by an advice pill collapsed that column to nothing, the fr tracks
+   redistributed the freed width, and the date and amount visibly stepped out of line with the rows
+   above. Every row now occupies the same grid whether it carries a button, a pill, or both. */
+.dues-row { display: grid;
+  grid-template-columns: minmax(0,1fr) 120px 130px 224px 154px;
   align-items: center; gap: 12px; padding: 9px 14px; border-top: 1px solid var(--border-color); }
 .dues-row:hover { background: var(--control-bg); }
 .dues-cell { min-width: 0; font-size: 12px; }
@@ -510,12 +515,14 @@ function dues_styles() {
 .dues-age.is-future { color: var(--text-muted); font-weight: 400; }
 .dues-amt { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums;
   color: var(--heading-color); }
-.dues-state { display: flex; align-items: center; gap: 5px; }
+.dues-state { display: flex; align-items: center; justify-content: flex-start; gap: 4px;
+  min-width: 0; overflow: hidden; }
 .dues-pill { font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 10px;
-  background: var(--bg-color); color: var(--text-muted); white-space: nowrap; }
+  background: var(--bg-color); color: var(--text-muted); white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .dues-note { color: var(--text-muted); cursor: help; }
 
-.dues-actions { display: flex; gap: 6px; }
+.dues-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .dues-pill.s-advice { text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
     background: rgba(29,158,117,.12); color: #0F6B4F; border: 1px solid rgba(29,158,117,.35); }
 .dues-pill.s-advice:hover { background: rgba(29,158,117,.2); }
@@ -547,7 +554,7 @@ function dues_styles() {
   .dues-age.is-bad { color: #F09595; }
 }
 @media (max-width: 768px) {
-  .dues-row { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .dues-row { grid-template-columns: minmax(0,1fr) auto; row-gap: 6px; }
   .dues-when, .dues-state { grid-column: 1 / -1; }
   .dues-amt { text-align: left; }
   .dues-search { margin-left: 0; width: 100%; }
