@@ -131,6 +131,11 @@ doc_events = {
     },
     # PM Workflow engine — fires on every doctype
     "*": {
+        # a document under an approval workflow may only be submitted from a state that
+        # carries doc_status 1; otherwise ERPNext's Submit button walks past the chain
+        "before_submit": [
+            "permission_manager.permission_manager.workflow.validate_submit_state",
+        ],
         "on_update": [
             "permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action.process_workflow_actions",
         ],

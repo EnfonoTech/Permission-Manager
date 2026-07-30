@@ -926,6 +926,56 @@ def is_transition_condition_satisfied(transition, doc) -> bool:
 
 # ─── Validation ───────────────────────────────────────────────────────────────
 
+# Doctypes where a document may only be submitted from a workflow state that carries
+# doc_status = 1. Without this, ERPNext's own Submit button posts the document straight past
+# the approval chain: validate_workflow() only compares the old and new workflow state, so a
+# submit that leaves the state untouched (Pending → Pending) passes every check and the
+# approval is skipped in silence. Seen on Journal Entry, where five Loyalty Reward Entry
+# journals were posted while still sitting in Pending Dept awaiting Operations.
+#
+# Kept as an explicit list rather than "every doctype with a workflow": switching it on
+# everywhere at once changes how every team submits, so widen it deliberately.
+SUBMIT_GUARD_DOCTYPES = ("Journal Entry",)
+
+
+def validate_submit_state(doc, method=None):
+    """Refuse a submit from a workflow state that is not a submitting state."""
+    if doc.doctype not in SUBMIT_GUARD_DOCTYPES:
+        return
+
+    workflow = get_workflow(doc.doctype, doc.name)
+    if not workflow:
+        return
+
+    state_name = doc.get(workflow.workflow_state_field)
+    if not state_name:
+        return
+
+    state = next((s for s in workflow.states if s.state == state_name), None)
+    if not state:
+        return
+
+    if cint(state.doc_status) == 1:
+        return
+
+    actions = sorted({
+        t.action
+        for t in workflow.transitions
+        if t.state == state_name and t.action
+    })
+    frappe.throw(
+        _("%(doctype)s %(name)s is at %(state)s and cannot be submitted directly — it still "
+          "needs approval. Use %(actions)s instead.")
+        % {
+            "doctype": _(doc.doctype),
+            "name": frappe.bold(doc.name),
+            "state": frappe.bold(state_name),
+            "actions": frappe.bold(", ".join(actions) or _("the workflow action")),
+        },
+        title=_("Approval Required"),
+    )
+
+
 def validate_workflow(doc):
     workflow = get_workflow(doc.doctype, doc.name)
     current_state = None
