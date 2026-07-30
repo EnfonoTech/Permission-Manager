@@ -856,10 +856,16 @@ def forward_workflow_action(action_name, to_user, comment="", return_to_originat
 
 
 @frappe.whitelist()
-def return_adhoc_to_originator(action_name, comment=""):
+def return_adhoc_to_originator(action_name, comment="", responded_action=None):
     """Ad-hoc (forwarded) approver returns control to the originator instead of
     advancing the workflow: closes this ad-hoc action and re-opens the original.
-    Used when the Forward was made with 'Return to Originator' ticked."""
+    Used when the Forward was made with 'Return to Originator' ticked.
+
+    `responded_action` is the label the reviewer chose (Approve, Reject, …) when they reached
+    here through the normal action buttons rather than the explicit return button. It never
+    moves the document — it is recorded on the document so the approver who forwarded it can
+    see what was recommended.
+    """
     action = frappe.get_doc("PM Workflow Action", action_name)
     if not action.is_adhoc or not action.adhoc_for:
         frappe.throw(_("This is not an ad-hoc action."))
@@ -871,14 +877,45 @@ def return_adhoc_to_originator(action_name, comment=""):
     frappe.db.set_value("PM Workflow Action", action_name,
                         {"status": "Completed", "completed_by": frappe.session.user}, update_modified=False)
     orig = action.adhoc_for
-    if frappe.db.exists("PM Workflow Action", orig):
+    reopened = False
+    if orig and frappe.db.exists("PM Workflow Action", orig):
         frappe.db.set_value("PM Workflow Action", orig,
                             {"status": "Open", "completed_by": None}, update_modified=False)
+        reopened = True
+
+    if not reopened:
+        # The original row is gone (an amend or trash cycle clears actions). Regenerate the
+        # state's actions from the workflow rather than leaving the document with nobody to
+        # approve it.
+        try:
+            ref_doc = frappe.get_doc(action.reference_doctype, action.reference_name)
+            process_workflow_actions(ref_doc, "on_update")
+        except Exception:
+            frappe.log_error(
+                message=frappe.get_traceback(),
+                title="permission_manager: could not regenerate an action on ad-hoc return",
+            )
+
+    # Never leave the document with no open action: a throw rolls the whole request back, so
+    # the ad-hoc action stays Open and the reviewer can try again, which is far better than a
+    # document nobody can approve.
+    if not frappe.db.exists("PM Workflow Action", {
+        "reference_doctype": action.reference_doctype,
+        "reference_name": action.reference_name,
+        "workflow_state": action.workflow_state,
+        "status": "Open",
+    }):
+        frappe.throw(
+            _("Could not re-open the original approver's action, so nothing was changed. "
+              "Ask a System Manager to reassign this approval.")
+        )
 
     try:
         ref = frappe.get_doc(action.reference_doctype, action.reference_name)
         who = frappe.db.get_value("User", frappe.session.user, "full_name") or frappe.session.user
         msg = _("Ad-hoc review by") + " <b>" + who + "</b> — " + _("returned to the original approver.")
+        if responded_action:
+            msg = msg + "<br>" + _("Recommended:") + " <b>" + frappe.utils.escape_html(str(responded_action)) + "</b>"
         if comment:
             msg = msg + "<br><em>" + frappe.utils.escape_html(comment) + "</em>"
         ref.add_comment("Workflow", msg)
@@ -886,14 +923,32 @@ def return_adhoc_to_originator(action_name, comment=""):
         pass
 
     try:
+        # The original may have been routed to a role rather than a named user, in which case
+        # assigned_to is empty and nobody used to be told the document was back.
+        recipients = []
         orig_user = frappe.db.get_value("PM Workflow Action", orig, "assigned_to") if orig else None
-        email = frappe.db.get_value("User", orig_user, "email") if orig_user else None
-        if email:
+        if orig_user:
+            recipients.append(orig_user)
+        elif orig:
+            for row in frappe.get_all(
+                "PM Workflow Action Permitted Role",
+                filters={"parent": orig, "approver_type": "Role"},
+                fields=["approver"],
+            ):
+                recipients.extend(get_users_with_role(row.approver))
+        emails = [
+            email
+            for email in {frappe.db.get_value("User", u, "email") for u in recipients if u}
+            if email
+        ]
+        if emails:
             subject = _("Returned for your approval:") + " " + action.reference_doctype + " " + str(action.reference_name)
             body = ("<p>" + _("An ad-hoc reviewer has returned this document for your approval.") + "</p>"
+                    + (("<p><b>" + _("Recommended:") + "</b> " + frappe.utils.escape_html(str(responded_action)) + "</p>")
+                       if responded_action else "")
                     + '<p><a href="' + frappe.utils.get_url() + '/app/pm-approval-inbox">' + _("Open My Approvals") + "</a></p>")
-            frappe.sendmail(recipients=[email], subject=subject, message=body)
+            frappe.sendmail(recipients=emails[:50], subject=subject, message=body)
     except Exception:
         pass
 
-    return {"returned_to": orig}
+    return {"returned_to": orig, "responded_action": responded_action}

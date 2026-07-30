@@ -107,15 +107,24 @@ def get_my_pending_approvals() -> dict:
     user_roles = set(frappe.get_roles(user))
 
     # ── Step 1: all open actions ───────────────────────────────────────────────
+    # "Forwarded" rows are included on purpose. Forwarding flips the original action to
+    # Forwarded, and while it sits there it appears in no user-facing view at all — not this
+    # inbox (which used to filter status == "Open"), not the list view (whose permission
+    # condition hard-appends status = 'Open') and not History (which filters Completed). The
+    # approver who forwarded it, and the role it belongs to, lost sight of the document until
+    # somebody else finished it. They are shown here as waiting, with who is holding it, and
+    # with no action buttons — see `waiting_with` below.
     actions = frappe.get_all(
         "PM Workflow Action",
         # Stock Entry approvals are shown ONLY in the Warehouse Dashboard,
         # not this general inbox (per ops request 2026-07-22).
-        filters={"status": "Open", "reference_doctype": ["!=", "Stock Entry"]},
+        filters={"status": ["in", ["Open", "Forwarded"]], "reference_doctype": ["!=", "Stock Entry"]},
         fields=[
-            "name", "reference_doctype", "reference_name",
+            "name", "reference_doctype", "reference_name", "status",
             "workflow_state", "assigned_to", "for_submitter", "creation", "priority",
             "is_adhoc", "adhoc_for", "return_to_originator",
+            # on a Forwarded row this holds the user who forwarded it
+            "completed_by",
         ],
     )
     if not actions:
@@ -139,6 +148,33 @@ def get_my_pending_approvals() -> dict:
     for p in perm_rows:
         perms_map.setdefault(p.parent, []).append(p)
 
+    # An ad-hoc (forwarded) action deliberately carries NO permitted_roles of its own — that
+    # child table is an authorisation surface, not a label, and populating it would hand every
+    # holder of the role read access plus the ability to close the ad-hoc action. The role slot
+    # an ad-hoc approver stands in belongs to the action it was forwarded from, so borrow the
+    # label from there. One query, no N+1.
+    adhoc_parents = [a.adhoc_for for a in actions if a.get("is_adhoc") and a.get("adhoc_for")]
+    parent_role_map: dict = {}
+    if adhoc_parents:
+        for p in frappe.get_all(
+            "PM Workflow Action Permitted Role",
+            filters={"parent": ["in", adhoc_parents], "approver_type": "Role"},
+            fields=["parent", "approver"],
+        ):
+            parent_role_map.setdefault(p.parent, p.approver)
+
+    # Who is holding each Forwarded action — its open ad-hoc child. One query.
+    forwarded_names = [a.name for a in actions if a.status == "Forwarded"]
+    holder_of_forwarded: dict = {}
+    if forwarded_names:
+        for child in frappe.get_all(
+            "PM Workflow Action",
+            filters={"adhoc_for": ["in", forwarded_names], "status": "Open"},
+            fields=["adhoc_for", "assigned_to"],
+        ):
+            if child.assigned_to:
+                holder_of_forwarded.setdefault(child.adhoc_for, child.assigned_to)
+
     # ── Step 3: filter to actions I can act on ─────────────────────────────────
     my_actions = []
     is_admin = user == "Administrator"
@@ -146,21 +182,46 @@ def get_my_pending_approvals() -> dict:
         role_id = ""
         is_mine = False
 
+        # a forwarded action stands in for the role of the action it came from
+        adhoc_role = parent_role_map.get(act.get("adhoc_for")) if act.get("is_adhoc") else None
+
+        # whoever forwarded an action keeps sight of it while somebody else holds it, even if
+        # they do not hold the role themselves (an Administrator forwarding, for instance)
+        if act.status == "Forwarded" and act.completed_by == user:
+            act["role_id"] = next(
+                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                "Direct",
+            )
+            my_actions.append(act)
+            continue
+
         if is_admin:
             # Administrator is an unrestricted super-viewer: every open action is theirs.
             is_mine = True
-            role_id = next(
-                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
-                "Administrator",
+            # NOT "Administrator": that literal used to win on every ad-hoc row, because an
+            # ad-hoc action has no permitted_roles to look through, and it made a forwarded
+            # action read as if the Administrator were the one holding it. Falling through to
+            # "" lets the state's own role fill the gap further down.
+            role_id = (
+                adhoc_role
+                or next(
+                    (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                    None,
+                )
+                or ("Ad-hoc" if act.get("is_adhoc") else "")
             )
         elif act.assigned_to == user:
             is_mine = True
             # Prefer the role name over "Direct" for display — the action may have been
             # pinned to this user via warehouse-permission resolution but still belongs to
             # a named role (e.g. "Stock Manager").  Show that role so the inbox is useful.
-            role_id = next(
-                (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
-                "Direct",
+            role_id = (
+                adhoc_role
+                or next(
+                    (p.approver for p in perms_map.get(act.name, []) if p.approver_type == "Role"),
+                    None,
+                )
+                or ("Ad-hoc" if act.get("is_adhoc") else "Direct")
             )
         else:
             for p in perms_map.get(act.name, []):
@@ -243,12 +304,16 @@ def get_my_pending_approvals() -> dict:
                 or creator_user.split("@")[0]
             )
 
-        # Holder — who this action is currently assigned to
+        # Holder — who this action is currently assigned to. A Forwarded action is not held by
+        # its own assignee any more: it is held by the ad-hoc approver it was forwarded to, so
+        # the row says who to chase.
+        is_waiting = act.status == "Forwarded"
+        holder_user = holder_of_forwarded.get(act.name) if is_waiting else act.assigned_to
         holder = ""
-        if act.assigned_to:
+        if holder_user:
             holder = (
-                frappe.db.get_value("User", act.assigned_to, "full_name")
-                or act.assigned_to.split("@")[0]
+                frappe.db.get_value("User", holder_user, "full_name")
+                or holder_user.split("@")[0]
             )
 
         # Days waiting since action was created
@@ -256,9 +321,12 @@ def get_my_pending_approvals() -> dict:
 
         # Available transitions
         trans_info      = dt_state_map.get((doctype, state), {"actions": [], "roles": []})
-        avail_actions   = trans_info["actions"]
+        # A waiting row offers no buttons: the document is out with somebody else, and acting on
+        # it from here would race the person holding it.
+        avail_actions   = [] if is_waiting else trans_info["actions"]
         role_id         = act.get("role_id") or (trans_info["roles"][0] if trans_info["roles"] else "")
-        category        = _categorize(state, avail_actions)
+        # categorise on what the state can do, not on the emptied button list
+        category        = _categorize(state, trans_info["actions"])
 
         results.append({
             "name":              act.name,
@@ -278,6 +346,9 @@ def get_my_pending_approvals() -> dict:
             "is_adhoc":          bool(act.get("is_adhoc")),
             "adhoc_for":         act.get("adhoc_for") or "",
             "return_to_originator": bool(act.get("return_to_originator")),
+            # forwarded and waiting on somebody else — shown, but not actionable from here
+            "is_waiting":        is_waiting,
+            "waiting_with":      holder,
         })
 
     # ── Step 6: sort within each category then group ────────────────────────────

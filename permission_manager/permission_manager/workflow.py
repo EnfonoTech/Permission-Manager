@@ -379,15 +379,28 @@ def get_allowed_transitions_for_user(
     # the current state, let them perform any transition from the state
     # (role/matrix bypassed); doc-based conditions are still enforced by the
     # caller via is_transition_condition_satisfied.
-    if doc is not None and doc.get("name") and frappe.db.exists("PM Workflow Action", {
-        "reference_doctype": doc.get("doctype"),
-        "reference_name": doc.get("name"),
-        "workflow_state": current_state,
-        "assigned_to": user,
-        "is_adhoc": 1,
-        "status": "Open",
-    }):
-        return transitions
+    if doc is not None and doc.get("name"):
+        adhoc = frappe.db.get_value(
+            "PM Workflow Action",
+            {
+                "reference_doctype": doc.get("doctype"),
+                "reference_name": doc.get("name"),
+                "workflow_state": current_state,
+                "assigned_to": user,
+                "is_adhoc": 1,
+                "status": "Open",
+            },
+            ["name", "return_to_originator"],
+            as_dict=True,
+        )
+        if adhoc:
+            # Forwarded with "Return to me after their input": this user may give input but
+            # may not move the document — apply_workflow sends it back to the forwarder
+            # instead. Offering transitions here would only render buttons the engine
+            # refuses to honour. Enforcement lives in apply_workflow, not here.
+            if cint(adhoc.return_to_originator):
+                return []
+            return transitions
 
     allowed = []
 
@@ -471,6 +484,30 @@ def has_approval_access(user, doc, transition) -> bool:
     )
 
 
+def get_open_return_adhoc_action(doc, current_state: str, user: str):
+    """The Open ad-hoc action this user holds that was forwarded "return to me", if any.
+
+    Such an approver is a reviewer, not a decision maker: whatever they choose, the document
+    goes back to the person who forwarded it for the final call.
+    """
+    if doc is None or not doc.get("name") or not current_state:
+        return None
+
+    return frappe.db.get_value(
+        "PM Workflow Action",
+        {
+            "reference_doctype": doc.get("doctype"),
+            "reference_name": doc.get("name"),
+            "workflow_state": current_state,
+            "assigned_to": user,
+            "is_adhoc": 1,
+            "status": "Open",
+            "return_to_originator": 1,
+        },
+        "name",
+    )
+
+
 # ─── Workflow application ─────────────────────────────────────────────────────
 
 @frappe.whitelist()
@@ -481,8 +518,40 @@ def apply_workflow(doc, action: str, comment: str = None, priority: str = None):
         frappe.local._pm_action_priority = priority
 
     workflow = get_workflow(doc.doctype, doc.name)
-    transitions = get_transitions(doc, workflow.name)
     user = frappe.session.user
+
+    # ── "Return to me after their input" ───────────────────────────────────────────────
+    # The forwarder ticked that box, so this reviewer's response must come back to them
+    # instead of moving the document on. This is checked before get_transitions() because
+    # that function deliberately returns no transitions for such a user, and it is checked
+    # here — the single choke point every entry route funnels through (inbox, document form,
+    # emailed link, bulk action, warehouse dashboard) — so no route can bypass it, not even
+    # Administrator, whose role checks are otherwise short-circuited.
+    current_state = doc.get(workflow.workflow_state_field)
+    adhoc_return = get_open_return_adhoc_action(doc, current_state, user)
+    if adhoc_return:
+        # the label still has to be a real transition of this state, just not one this
+        # reviewer is allowed to complete
+        if not frappe.db.exists(
+            "PM Workflow Transition",
+            {"parent": workflow.name, "state": current_state, "action": action},
+        ):
+            frappe.throw(_("Invalid Workflow Action: %s") % action)
+
+        from permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action import (
+            return_adhoc_to_originator,
+        )
+
+        return_adhoc_to_originator(adhoc_return, comment, responded_action=action)
+        frappe.msgprint(
+            _("Your input on %s went back to the approver who forwarded it — the workflow did "
+              "not advance.") % frappe.bold(action),
+            alert=True,
+            indicator="blue",
+        )
+        return doc
+
+    transitions = get_transitions(doc, workflow.name)
 
     transition = next((t for t in transitions if t.action == action), None)
     if not transition:

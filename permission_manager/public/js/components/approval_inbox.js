@@ -355,17 +355,31 @@ export class ApprovalInbox {
             .join(" ").toLowerCase();
 
         let act_html = "";
-        (item.available_actions || []).forEach((act_name) => {
-            const cls = _action_btn_class(act_name);
-            act_html += `<button class="btn btn-xs ${cls} ps-ai-act-btn"
-                data-action="${esc(act_name)}"
-                data-doctype="${esc(item.doctype)}"
-                data-docname="${esc(item.docname)}"
-                title="${esc(act_name)}">${esc(act_name)}</button>`;
-        });
-        if (!act_html) act_html = `<span class="ps-ai-no-action text-muted">${__("No action")}</span>`;
+        // An ad-hoc approver who was forwarded to with "return to me" gives input only — the
+        // server sends the document back to the forwarder instead of advancing it, so showing
+        // Approve/Reject here would promise something the engine refuses to do.
+        const input_only = !!(item.is_adhoc && item.return_to_originator);
+        if (!input_only) {
+            (item.available_actions || []).forEach((act_name) => {
+                const cls = _action_btn_class(act_name);
+                act_html += `<button class="btn btn-xs ${cls} ps-ai-act-btn"
+                    data-action="${esc(act_name)}"
+                    data-doctype="${esc(item.doctype)}"
+                    data-docname="${esc(item.docname)}"
+                    title="${esc(act_name)}">${esc(act_name)}</button>`;
+            });
+        }
+        if (!act_html && !input_only && !item.is_waiting) {
+            act_html = `<span class="ps-ai-no-action text-muted">${__("No action")}</span>`;
+        }
+        if (item.is_waiting) {
+            // forwarded out: visible so it is not forgotten, but not actionable from here
+            act_html += `<span class="ps-ai-adhoc-badge" title="${
+                __("Forwarded — waiting on {0}", [item.waiting_with || __("another approver")])
+            }">${__("Waiting")}${item.waiting_with ? ": " + esc(item.waiting_with) : ""}</span>`;
+        }
         // Forward button — only for non-adhoc actions (can't forward an already-forwarded ad-hoc)
-        if (!item.is_adhoc) {
+        if (!item.is_adhoc && !item.is_waiting) {
             act_html += `<button class="btn btn-xs btn-default ps-ai-fwd-btn"
                 data-name="${esc(item.name)}"
                 data-docname="${esc(item.docname)}"
@@ -409,10 +423,10 @@ export class ApprovalInbox {
                 </td>
                 <td class="ps-ai-col-role">${esc(item.role_id)}</td>
                 <td class="ps-ai-col-holder">
-                    ${item.role_id && item.role_id !== "Direct"
-                        ? `<span class="text-muted ps-ai-holder-role">${esc(item.role_id)}</span>`
-                        : item.holder
-                            ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>`
+                    ${item.holder
+                        ? `<span class="ps-ai-holder-name">${esc(item.holder)}</span>`
+                        : item.role_id && item.role_id !== "Direct"
+                            ? `<span class="text-muted ps-ai-holder-role">${esc(item.role_id)}</span>`
                             : `<span class="text-muted">—</span>`}
                 </td>
                 <td class="ps-ai-col-state">
