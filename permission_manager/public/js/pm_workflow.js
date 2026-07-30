@@ -6,9 +6,32 @@
 //   - Shows who the current pending approver is (Employee Approver Matrix routing)
 //   - Lets System Managers / HR Managers reassign the pending approver
 
+// Take away the native Submit button on a document an approval workflow governs — the
+// approval buttons are the only legitimate way forward, and a visible Submit invites people
+// to post the document past its own chain. The server refuses such a submit as well; this is
+// so nobody is offered a button that will only refuse them.
+//
+// Two traps this has to survive:
+//   * Frappe re-adds Submit every time the form re-renders (a save, for instance), and the
+//     workflow lookup below is asynchronous — clearing once inside the callback loses the
+//     race, which is why the flag is remembered and re-applied on every later refresh.
+//   * clear_primary_action() removes whatever the primary button currently is. On a dirty
+//     form that is SAVE, so clearing unconditionally would leave the user unable to save.
+function _pm_hide_native_submit(frm) {
+	if (!frm.__pm_has_workflow) return;
+	if (frm.doc.docstatus !== 0) return;
+	if (frm.is_dirty && frm.is_dirty()) return; // primary action is Save — leave it alone
+	frm.page.clear_primary_action();
+}
+
 $(document).on("form-refresh", function (event, frm) {
 	if (!frm || !frm.doctype) return;
 	if (frm.doc.__islocal) return;
+
+	// already known to be under a workflow: clear now, before the round-trip below, and once
+	// more on the next tick in case Frappe re-renders the toolbar after this handler
+	_pm_hide_native_submit(frm);
+	setTimeout(() => _pm_hide_native_submit(frm), 0);
 
 	try {
 		frappe.call({
@@ -26,12 +49,16 @@ $(document).on("form-refresh", function (event, frm) {
 				}
 
 				if (workflow_name) {
-					frm.page.clear_primary_action();
+					frm.__pm_has_workflow = true;
+					_pm_hide_native_submit(frm);
+					setTimeout(() => _pm_hide_native_submit(frm), 0);
 					if (!workflow.override_status) {
 						_override_document_status(frm, current_state, workflow.workflow_state_field);
 					}
 					_load_allowed_transitions(frm, workflow, current_state);
 					_load_pending_approver_info(frm);
+				} else {
+					frm.__pm_has_workflow = false;
 				}
 			},
 		});
