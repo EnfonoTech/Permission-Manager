@@ -17,16 +17,30 @@ from frappe.tests.utils import FrappeTestCase
 from permission_manager.permission_manager.api.approvals import get_my_pending_approvals
 from permission_manager.permission_manager.workflow import get_open_return_adhoc_action
 
-REF_DOCTYPE = "Payment Advice"
 STATE = "_Test Pending Approval"
 
+# reference_name is a Dynamic Link, so the target has to exist. Tests borrow a real draft
+# document rather than inventing one, which also means the inbox's docstatus filter keeps the
+# rows and the visibility assertions are actually exercised.
+REF_CANDIDATES = ("Payment Advice", "Journal Entry", "Purchase Order", "Purchase Invoice")
 
-def _action(**overrides):
-    """An unsaved-then-inserted PM Workflow Action, with no reference to a real document."""
+
+def _find_draft():
+    for doctype in REF_CANDIDATES:
+        if not frappe.db.table_exists(doctype):
+            continue
+        name = frappe.db.get_value(doctype, {"docstatus": 0}, "name")
+        if name:
+            return doctype, name
+    return None, None
+
+
+def _action(reference_doctype, reference_name, **overrides):
+    """A PM Workflow Action against a real draft document."""
     spec = {
         "doctype": "PM Workflow Action",
-        "reference_doctype": REF_DOCTYPE,
-        "reference_name": "_TEST-ADHOC-0001",
+        "reference_doctype": reference_doctype,
+        "reference_name": reference_name,
         "workflow_state": STATE,
         "status": "Open",
         "priority": "Medium",
@@ -44,16 +58,18 @@ class TestAdhocForwardVisibility(FrappeTestCase):
         self.user = frappe.db.get_value("User", {"enabled": 1, "name": ["!=", "Administrator"]}, "name")
         if not self.user:
             self.skipTest("no enabled non-Administrator user on this site")
+        self.ref_doctype, self.ref_name = _find_draft()
+        if not self.ref_name:
+            self.skipTest("no draft document on this site to attach a test action to")
 
     def _rows_for_doc(self, docname):
         frappe.set_user("Administrator")
         payload = get_my_pending_approvals()
-        rows = [r for g in payload["groups"] for r in g["items"] if r["docname"] == docname]
-        return rows
+        return [r for g in payload["groups"] for r in g["items"] if r["docname"] == docname]
 
     def test_adhoc_row_is_not_labelled_administrator(self):
-        original = _action(status="Forwarded", completed_by="Administrator")
-        _action(is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded", completed_by="Administrator")
+        _action(self.ref_doctype, self.ref_name, is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
         rows = self._rows_for_doc(original.reference_name)
         adhoc_rows = [r for r in rows if r["is_adhoc"]]
         if not adhoc_rows:
@@ -62,8 +78,8 @@ class TestAdhocForwardVisibility(FrappeTestCase):
             self.assertNotEqual(row["role_id"], "Administrator")
 
     def test_adhoc_row_names_the_holder(self):
-        original = _action(status="Forwarded", completed_by="Administrator")
-        _action(is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded", completed_by="Administrator")
+        _action(self.ref_doctype, self.ref_name, is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
         rows = [r for r in self._rows_for_doc(original.reference_name) if r["is_adhoc"]]
         if not rows:
             self.skipTest("reference document does not exist, so the row is filtered out")
@@ -71,8 +87,8 @@ class TestAdhocForwardVisibility(FrappeTestCase):
         self.assertEqual(rows[0]["holder"], expected)
 
     def test_forwarded_original_stays_visible_and_says_who_holds_it(self):
-        original = _action(status="Forwarded", completed_by="Administrator")
-        _action(is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded", completed_by="Administrator")
+        _action(self.ref_doctype, self.ref_name, is_adhoc=1, adhoc_for=original.name, assigned_to=self.user)
         rows = [r for r in self._rows_for_doc(original.reference_name) if r["name"] == original.name]
         if not rows:
             self.skipTest("reference document does not exist, so the row is filtered out")
@@ -90,18 +106,17 @@ class TestReturnToOriginatorLookup(FrappeTestCase):
         self.user = frappe.db.get_value("User", {"enabled": 1, "name": ["!=", "Administrator"]}, "name")
         if not self.user:
             self.skipTest("no enabled non-Administrator user on this site")
-        self.doc = frappe._dict({"doctype": REF_DOCTYPE, "name": "_TEST-ADHOC-0002"})
+        self.ref_doctype, self.ref_name = _find_draft()
+        if not self.ref_name:
+            self.skipTest("no draft document on this site to attach a test action to")
+        self.doc = frappe._dict({"doctype": self.ref_doctype, "name": self.ref_name})
 
     def _adhoc(self, **overrides):
-        original = _action(reference_name=self.doc.name, status="Forwarded", completed_by="Administrator")
-        spec = {
-            "reference_name": self.doc.name,
-            "is_adhoc": 1,
-            "adhoc_for": original.name,
-            "assigned_to": self.user,
-        }
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded",
+                           completed_by="Administrator")
+        spec = {"is_adhoc": 1, "adhoc_for": original.name, "assigned_to": self.user}
         spec.update(overrides)
-        return _action(**spec)
+        return _action(self.ref_doctype, self.ref_name, **spec)
 
     def test_found_when_the_flag_is_set(self):
         self._adhoc(return_to_originator=1)
@@ -132,14 +147,18 @@ class TestReturnLeg(FrappeTestCase):
         self.user = frappe.db.get_value("User", {"enabled": 1, "name": ["!=", "Administrator"]}, "name")
         if not self.user:
             self.skipTest("no enabled non-Administrator user on this site")
+        self.ref_doctype, self.ref_name = _find_draft()
+        if not self.ref_name:
+            self.skipTest("no draft document on this site to attach a test action to")
 
     def test_return_reopens_the_original_and_closes_the_adhoc(self):
         from permission_manager.permission_manager.doctype.pm_workflow_action.pm_workflow_action import (
             return_adhoc_to_originator,
         )
 
-        original = _action(status="Forwarded", completed_by="Administrator", assigned_to="Administrator")
-        adhoc = _action(is_adhoc=1, adhoc_for=original.name, assigned_to=self.user, return_to_originator=1)
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded", completed_by="Administrator", assigned_to="Administrator")
+        adhoc = _action(self.ref_doctype, self.ref_name, is_adhoc=1, adhoc_for=original.name,
+                        assigned_to=self.user, return_to_originator=1)
 
         frappe.set_user(self.user)
         try:
@@ -160,8 +179,9 @@ class TestReturnLeg(FrappeTestCase):
             return_adhoc_to_originator,
         )
 
-        original = _action(status="Forwarded", completed_by="Administrator")
-        adhoc = _action(is_adhoc=1, adhoc_for=original.name, assigned_to=self.user, return_to_originator=1)
+        original = _action(self.ref_doctype, self.ref_name, status="Forwarded", completed_by="Administrator")
+        adhoc = _action(self.ref_doctype, self.ref_name, is_adhoc=1, adhoc_for=original.name,
+                        assigned_to=self.user, return_to_originator=1)
         frappe.db.set_value("PM Workflow Action", adhoc.name, "adhoc_for", "does-not-exist")
         frappe.delete_doc("PM Workflow Action", original.name, force=True, ignore_permissions=True)
 
