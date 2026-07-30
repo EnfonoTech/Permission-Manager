@@ -27,6 +27,16 @@ PI_LOCAL_ROLE = "Purchase Assistant"        # material, company currency (and re
 PI_IMPORT_ROLE = "Purchase Manager"         # material, foreign currency
 JE_INITIATE_ROLE = "Accounts User"          # creates + sends / submits normal JVs
 
+# Journal templates that need no approval at all: the initiator (or an Accountant) submits
+# them exactly like an untemplated JV. Without this list, ANY template routes to Pending Dept
+# while the exits from Pending Dept are generated per Approval Group — so a template nobody is
+# configured to approve strands there with no transition out. VAT PAYABLE is a computed
+# statutory posting the accounts team raises and owns, so it goes straight through.
+JE_DIRECT_TEMPLATES = ("VAT PAYABLE",)
+
+# An Accountant may submit a direct template even without the Accounts User role.
+JE_DIRECT_EXTRA_ROLE = "Accountant"
+
 # Fixed-asset PI/PO route through this group (Dept Head → GM → Accountant); seeded
 # as a normal PM Approval Group so the same generic multi-stage engine builds it.
 ASSET_GROUP = "Asset"
@@ -331,12 +341,21 @@ def _build_pi(groups):
 
 
 def _build_je(groups):
-	NORMAL = "not doc.from_template"
-	ROUTED = "doc.from_template"
+	# Templates in JE_DIRECT_TEMPLATES submit like an untemplated JV; everything else routes.
+	# With no direct templates configured these are the original two conditions, unchanged.
+	direct = _pytuple(JE_DIRECT_TEMPLATES) if JE_DIRECT_TEMPLATES else None
+	NORMAL = ("not doc.from_template or doc.from_template in %s" % direct) if direct else "not doc.from_template"
+	ROUTED = ("doc.from_template and doc.from_template not in %s" % direct) if direct else "doc.from_template"
 	tx = [
 		_t("Draft", "Submit", "Approved", JE_INITIATE_ROLE, cond=NORMAL, self_appr=1),
 		_t("Draft", "Send for Approval", "Pending Dept", JE_INITIATE_ROLE, cond=ROUTED, self_appr=1, attach=1),
 	]
+	if direct:
+		# the accounts team owns these postings, so an Accountant can submit one even without
+		# the Accounts User role
+		DIRECT_ONLY = "doc.from_template in %s" % direct
+		tx.append(_t("Draft", "Submit", "Approved", JE_DIRECT_EXTRA_ROLE, cond=DIRECT_ONLY, self_appr=1))
+		tx.append(_t("Rejected", "Submit", "Approved", JE_DIRECT_EXTRA_ROLE, cond=DIRECT_ONLY, self_appr=1))
 	def cond_for(g, c):
 		return ("doc.from_template in %s" % _pytuple(c["templates"])) if c["templates"] else None
 	tx += _group_stage_transitions(
