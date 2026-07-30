@@ -933,9 +933,22 @@ def is_transition_condition_satisfied(transition, doc) -> bool:
 # approval is skipped in silence. Seen on Journal Entry, where five Loyalty Reward Entry
 # journals were posted while still sitting in Pending Dept awaiting Operations.
 #
-# Kept as an explicit list rather than "every doctype with a workflow": switching it on
-# everywhere at once changes how every team submits, so widen it deliberately.
-SUBMIT_GUARD_DOCTYPES = ("Journal Entry",)
+# Kept as an explicit list rather than "every doctype with a workflow", because the two are
+# not the same thing. A workflow existing for a doctype does not mean the people using it go
+# through the workflow: on this site 5,133 Stock Entries were submitted straight from Draft,
+# so the warehouse plainly posts receipts, issues and manufacture with ERPNext's own button.
+# Guarding that doctype would stop stock work outright and leave only Stock Managers able to
+# post, which is a decision for the warehouse team rather than a side effect of this fix.
+#
+# The doctypes below are the ones whose approval chain is real and in use — their bypass
+# counts are 40, 1, 4 and 0 respectively, i.e. accidents rather than the normal route.
+SUBMIT_GUARD_DOCTYPES = (
+    "Journal Entry",
+    "Purchase Invoice",
+    "Purchase Order",
+    "Payment Advice",
+    "Payment Request",
+)
 
 
 def validate_submit_state(doc, method=None):
