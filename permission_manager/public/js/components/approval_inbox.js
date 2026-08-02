@@ -917,12 +917,13 @@ export class ApprovalInbox {
 
         frappe.call({
             method: "permission_manager.permission_manager.api.approvals.get_my_approval_history",
-            args: {
-                limit: 500,
-                all_users: all_users ? 1 : 0,
-                from_date: this._from_date || null,
-                to_date: this._to_date || null,
-            },
+            // Only send a date when there is one: an empty value reaches the server as the
+            // string "null", which is not a date and used to fail the whole request.
+            args: Object.assign(
+                { limit: 500, all_users: all_users ? 1 : 0 },
+                this._from_date ? { from_date: this._from_date } : {},
+                this._to_date ? { to_date: this._to_date } : {}
+            ),
             callback: (r) => {
                 const rows = r.message || [];
 
@@ -1018,7 +1019,12 @@ export class ApprovalInbox {
                     this._load_lifecycle($life, row, { history: true });
                 });
             },
-            error: () => $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load history.")}</p></div>`),
+            error: (e) => {
+                console.error("Approval history failed", e);
+                $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load history.")}</p>
+                    <p class="text-muted small">${frappe.utils.escape_html(
+                        (e && e.message) || (e && e.exc_type) || "")}</p></div>`);
+            },
         });
     }
 

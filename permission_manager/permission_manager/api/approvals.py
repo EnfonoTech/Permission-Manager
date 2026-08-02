@@ -469,10 +469,31 @@ MAX_HISTORY_ROWS = 500
 DEFAULT_HISTORY_DAYS = 30
 
 
+def _blank(value):
+    """A date the caller did not really give.
+
+    An empty filter travels from the browser as the literal string "null" or "undefined", not
+    as nothing, and getdate() rejects those - which killed the whole request rather than simply
+    meaning "no date".
+    """
+    return value in (None, "", "null", "None", "undefined", "NaN")
+
+
 def _history_window(from_date, to_date):
     """A date window is always applied. Without one this query would happily scan every
     completed action the site has ever recorded, which is the difference between a page that
     opens and a page that times out."""
+    from_date = None if _blank(from_date) else from_date
+    to_date = None if _blank(to_date) else to_date
+    try:
+        if from_date:
+            getdate(from_date)
+        if to_date:
+            getdate(to_date)
+    except Exception:
+        # an unparseable date means "no date", never a failed page
+        from_date = to_date = None
+
     if from_date and to_date:
         return {"modified": ["between", [from_date, add_days(getdate(to_date), 1)]]}
     if from_date:
