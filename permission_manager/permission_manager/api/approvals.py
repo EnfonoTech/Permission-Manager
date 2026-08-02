@@ -14,7 +14,7 @@ directly from the inbox without visiting the form.
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import cstr, now_datetime
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -114,11 +114,17 @@ def get_my_pending_approvals() -> dict:
     # approver who forwarded it, and the role it belongs to, lost sight of the document until
     # somebody else finished it. They are shown here as waiting, with who is holding it, and
     # with no action buttons — see `waiting_with` below.
+    # Document types whose workflow is flagged "Hide from Approvals Page". Configured on the
+    # PM Workflow itself rather than listed here, so hiding or restoring one is a tick box and
+    # not a deployment.
+    hidden = _hidden_doctypes()
+
     actions = frappe.get_all(
         "PM Workflow Action",
         # Stock Entry approvals are shown ONLY in the Warehouse Dashboard,
         # not this general inbox (per ops request 2026-07-22).
-        filters={"status": ["in", ["Open", "Forwarded"]], "reference_doctype": ["!=", "Stock Entry"]},
+        filters={"status": ["in", ["Open", "Forwarded"]],
+                 "reference_doctype": ["not in", ["Stock Entry"] + hidden]},
         fields=[
             "name", "reference_doctype", "reference_name", "status",
             "workflow_state", "assigned_to", "for_submitter", "creation", "priority",
@@ -701,3 +707,153 @@ def _send_sla_email(action, perm_map: dict, wf, age_days: int, escalated: bool):
         )
     except Exception:
         frappe.log_error(f"PM Approval SLA: failed to send reminder for {action.name}")
+
+
+def _hidden_doctypes() -> list:
+    """Document types whose workflow asks not to appear on the Approvals page."""
+    if not frappe.db.has_column("PM Workflow", "hide_from_approval_inbox"):
+        return []
+    return frappe.get_all(
+        "PM Workflow",
+        filters={"is_active": 1, "hide_from_approval_inbox": 1},
+        pluck="document_type",
+    ) or []
+
+
+def _condition_holds(condition: str, doc) -> bool:
+    """Would this transition be offered for this document?
+
+    Conditions that read frappe.session are answered "yes": they depend on who is looking,
+    and the chain is drawn for the document, not for the viewer. Evaluated the same way the
+    engine evaluates them, so a chain never claims a step the engine would refuse.
+    """
+    if not condition:
+        return True
+    if "frappe.session" in condition:
+        return True
+    try:
+        from permission_manager.permission_manager.workflow import get_workflow_safe_globals
+
+        return bool(frappe.safe_eval(condition, get_workflow_safe_globals(), dict(doc=doc.as_dict())))
+    except Exception:
+        return False
+
+
+def _shortest_path(edges: dict, start: str, targets: set) -> list:
+    """Fewest steps from start to any target, following only the edges given."""
+    if start in targets:
+        return [start]
+    seen, queue = {start}, [[start]]
+    while queue:
+        path = queue.pop(0)
+        for nxt in sorted(edges.get(path[-1], [])):
+            if nxt in seen:
+                continue
+            if nxt in targets:
+                return path + [nxt]
+            seen.add(nxt)
+            queue.append(path + [nxt])
+    return []
+
+
+def _role_holders(roles) -> list:
+    """Enabled users holding each role, so a stalled approval has a name to chase."""
+    out = []
+    for role in sorted({r for r in roles if r}):
+        users = frappe.get_all(
+            "Has Role", filters={"role": role, "parenttype": "User"}, pluck="parent"
+        )
+        people = []
+        for u in sorted(set(users)):
+            if u in ("Administrator", "Guest"):
+                continue
+            row = frappe.db.get_value("User", u, ["enabled", "full_name"], as_dict=True)
+            if not row or not row.enabled:
+                continue
+            people.append({"user": u, "full_name": row.full_name or u.split("@")[0]})
+        out.append({"role": role, "users": people, "count": len(people)})
+    return out
+
+
+@frappe.whitelist()
+def get_document_lifecycle(doctype: str, docname: str) -> dict:
+    """The approval chain this document actually travels, and where it has got to.
+
+    Worked out per document rather than per workflow: most of these chains fork on the
+    document itself - the journal template, the purchase approval group, the payment route -
+    so listing every state of the workflow would show phases this document will never see.
+    Conditions are evaluated against the document, and only the reachable path is returned.
+
+    Deliberately a separate call, made when a row is expanded. Building it for every row of
+    the inbox would mean loading every document on every refresh.
+    """
+    if not (doctype and docname):
+        return {"chain": [], "roles": []}
+    if not frappe.has_permission(doctype, "read", doc=docname):
+        frappe.throw(_("Not permitted to read {0} {1}").format(doctype, docname), frappe.PermissionError)
+
+    wf = frappe.db.get_value(
+        "PM Workflow", {"document_type": doctype, "is_active": 1}, "name"
+    )
+    if not wf:
+        return {"chain": [], "roles": []}
+
+    doc = frappe.get_doc(doctype, docname)
+    current = doc.get("workflow_state") or ""
+
+    states = frappe.get_all(
+        "PM Workflow Document State", filters={"parent": wf},
+        fields=["state", "doc_status"], order_by="idx asc",
+    )
+    finals = {s.state for s in states if cstr(s.doc_status) == "1"}
+
+    transitions = frappe.get_all(
+        "PM Workflow Transition", filters={"parent": wf},
+        fields=["state", "action", "next_state", "allowed", "approver_type", "condition"],
+        order_by="idx asc",
+    )
+
+    edges, roles_at = {}, {}
+    for t in transitions:
+        if (t.action or "").strip().lower().startswith("reject"):
+            continue
+        if not _condition_holds(t.condition, doc):
+            continue
+        edges.setdefault(t.state, set()).add(t.next_state)
+        if t.approver_type in (None, "", "Role") and t.allowed:
+            roles_at.setdefault(t.state, set()).add(t.allowed)
+
+    start = states[0].state if states else "Draft"
+    behind = _shortest_path(edges, start, {current}) if current and current != start else [start]
+    ahead = _shortest_path(edges, current or start, finals)
+    chain_states = (behind or [current or start]) + (ahead[1:] if len(ahead) > 1 else [])
+
+    # who already acted, so a completed step carries a name and not just a tick
+    done_by = {}
+    if frappe.db.table_exists("PM Workflow Action"):
+        for a in frappe.get_all(
+            "PM Workflow Action",
+            filters={"reference_doctype": doctype, "reference_name": docname,
+                     "status": "Completed"},
+            fields=["workflow_state", "completed_by", "modified"],
+            order_by="modified asc",
+        ):
+            if a.completed_by:
+                done_by[a.workflow_state] = (
+                    frappe.db.get_value("User", a.completed_by, "full_name")
+                    or a.completed_by.split("@")[0]
+                )
+
+    cur_idx = chain_states.index(current) if current in chain_states else 0
+    chain = []
+    for i, st in enumerate(chain_states):
+        chain.append({
+            "state": st,
+            "status": "done" if i < cur_idx else "current" if i == cur_idx else "upcoming",
+            "roles": sorted(roles_at.get(st, [])),
+            "by": done_by.get(st, ""),
+            "final": st in finals,
+        })
+
+    pending_roles = roles_at.get(current, set())
+    return {"chain": chain, "roles": _role_holders(pending_roles), "current": current}

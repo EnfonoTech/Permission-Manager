@@ -460,6 +460,7 @@ export class ApprovalInbox {
             $row.filter(".ps-ai-row").find(".ps-ai-expand-icon").text("▾");
             if ($preview_body.data("loaded")) return;
             $preview_body.data("loaded", true);
+            this._load_lifecycle($preview_body, item);
             this._load_preview($preview_body, item.doctype, item.docname);
         });
 
@@ -479,6 +480,78 @@ export class ApprovalInbox {
         });
 
         $tbody.append($row);
+    }
+
+    // ── Approval chain ────────────────────────────────────────────────────────
+    // Drawn per document, not per workflow: these chains fork on the document itself, so
+    // showing every state of the workflow would promise phases this one will never reach.
+    _load_lifecycle($container, item) {
+        const $life = $(`<div class="ps-ai-life"><div class="ps-ai-life-loading text-muted">${
+            __("Loading approval chain…")}</div></div>`);
+        $container.prepend($life);
+
+        frappe.call({
+            method: "permission_manager.permission_manager.api.approvals.get_document_lifecycle",
+            args: { doctype: item.doctype, docname: item.docname },
+            callback: (r) => {
+                const d = (r && r.message) || {};
+                const chain = d.chain || [];
+                if (!chain.length) {
+                    $life.html(`<div class="text-muted">${__("No approval chain for this document.")}</div>`);
+                    return;
+                }
+
+                let steps = "";
+                chain.forEach((ph, i) => {
+                    const cls = `ps-ai-ph ps-ai-ph-${ph.status}`;
+                    const dot = ph.status === "done" ? "✓" : ph.status === "current" ? "●" : "○";
+                    const who = ph.by
+                        ? `<span class="ps-ai-ph-by">${esc(ph.by)}</span>`
+                        : (ph.roles || []).length
+                            ? `<span class="ps-ai-ph-role">${esc(ph.roles.join(" / "))}</span>`
+                            : "";
+                    steps += `<div class="${cls}" title="${esc(ph.state)}">
+                            <div class="ps-ai-ph-dot">${dot}</div>
+                            <div class="ps-ai-ph-label">${esc(ph.state)}</div>
+                            ${who}
+                        </div>`;
+                    if (i < chain.length - 1) steps += `<div class="ps-ai-ph-link"></div>`;
+                });
+
+                let holders = "";
+                const roles = d.roles || [];
+                if (roles.length) {
+                    const total = roles.reduce((n, r) => n + (r.count || 0), 0);
+                    const names = roles.map((r) => `
+                        <div class="ps-ai-who-role">
+                            <div class="ps-ai-who-role-name">${esc(r.role)} <span class="text-muted">(${r.count})</span></div>
+                            ${(r.users || []).length
+                                ? (r.users || []).map((u) =>
+                                    `<div class="ps-ai-who-user" title="${esc(u.user)}">${esc(u.full_name)}</div>`).join("")
+                                : `<div class="ps-ai-who-user text-muted">${__("nobody holds this role")}</div>`}
+                        </div>`).join("");
+                    holders = `
+                        <div class="ps-ai-who">
+                            <div class="ps-ai-who-toggle" role="button" tabindex="0">
+                                <span class="ps-ai-who-caret">▸</span>
+                                ${__("Who can act now")} <span class="text-muted">(${total})</span>
+                            </div>
+                            <div class="ps-ai-who-body" style="display:none">${names}</div>
+                        </div>`;
+                }
+
+                $life.html(`<div class="ps-ai-life-chain">${steps}</div>${holders}`);
+                $life.find(".ps-ai-who-toggle").on("click keypress", function (e) {
+                    if (e.type === "keypress" && e.which !== 13 && e.which !== 32) return;
+                    const $b = $(this).siblings(".ps-ai-who-body");
+                    $b.toggle();
+                    $(this).find(".ps-ai-who-caret").text($b.is(":visible") ? "▾" : "▸");
+                });
+            },
+            error: () => {
+                $life.html(`<div class="text-muted">${__("Could not load the approval chain.")}</div>`);
+            },
+        });
     }
 
     _load_preview($container, doctype, docname) {

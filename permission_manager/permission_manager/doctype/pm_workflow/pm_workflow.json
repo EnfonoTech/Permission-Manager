@@ -12,6 +12,7 @@
   "workflow_name",
   "document_type",
   "is_active",
+  "hide_from_approval_inbox",
   "override_status",
   "send_email_alert",
   "column_break_aymh",
@@ -58,6 +59,13 @@
    "fieldname": "is_active",
    "fieldtype": "Check",
    "label": "Is Active"
+  },
+  {
+   "fieldname": "hide_from_approval_inbox",
+   "fieldtype": "Check",
+   "label": "Hide from Approvals Page",
+   "default": "0",
+   "description": "Approvals for this document type are not listed on the Approvals page. The workflow still runs and the document is still approved from its own form - only the inbox listing is suppressed. Use for document types that have their own dedicated screen, or whose volume would drown the inbox."
   },
   {
    "default": "0",
