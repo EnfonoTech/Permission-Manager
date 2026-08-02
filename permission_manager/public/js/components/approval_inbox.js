@@ -124,11 +124,13 @@ export class ApprovalInbox {
         this.wrapper.find(".ps-ai-from-date").on("change", (e) => {
             this._from_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
+            else if (this._active_tab === "history") this._render_history();
         });
 
         this.wrapper.find(".ps-ai-to-date").on("change", (e) => {
             this._to_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
+            else if (this._active_tab === "history") this._render_history();
         });
 
         this.wrapper.find(".ps-ai-nav-tab").on("click", (e) => {
@@ -908,13 +910,51 @@ export class ApprovalInbox {
         const $body = this.wrapper.find(".ps-ai-body");
         $body.html(`<div class="ps-loading">${__("Loading history…")}</div>`);
 
+        // Only a System Manager may look beyond their own actions, and the server enforces
+        // that too - this just decides whether the box is worth showing.
+        const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
+        const all_users = is_sysmgr && !!this._history_all_users;
+
         frappe.call({
             method: "permission_manager.permission_manager.api.approvals.get_my_approval_history",
-            args: { limit: 200 },
+            args: {
+                limit: 500,
+                all_users: all_users ? 1 : 0,
+                from_date: this._from_date || null,
+                to_date: this._to_date || null,
+            },
             callback: (r) => {
                 const rows = r.message || [];
+
+                const window_note = this._from_date || this._to_date
+                    ? __("Showing {0} to {1}", [this._from_date || "…", this._to_date || "…"])
+                    : __("Showing the last 30 days — set the dates above for another period");
+
+                const toggle = is_sysmgr
+                    ? `<label class="ps-ai-allusers">
+                           <input type="checkbox" class="ps-ai-allusers-chk" ${all_users ? "checked" : ""} />
+                           ${__("All users")}
+                       </label>`
+                    : "";
+
+                const bar = `<div class="ps-ai-hist-bar">
+                        <span class="text-muted">${window_note}${
+                            rows.length >= 500 ? " · " + __("first 500 shown") : ""}</span>
+                        ${toggle}
+                    </div>`;
+
                 if (!rows.length) {
-                    $body.html(`<div class="ps-ai-empty"><h4>${__("No approval history yet.")}</h4><p class="text-muted">${__("Actions appear here once approvals are processed on your documents.")}</p></div>`);
+                    $body.html(bar + `<div class="ps-ai-empty"><h4>${
+                        all_users ? __("No approvals in this period.") : __("No approval history yet.")
+                    }</h4><p class="text-muted">${
+                        all_users
+                            ? __("Nobody completed an approval in the selected dates.")
+                            : __("Actions appear here once approvals are processed on your documents.")
+                    }</p></div>`);
+                    $body.find(".ps-ai-allusers-chk").on("change", (e) => {
+                        this._history_all_users = $(e.target).is(":checked");
+                        this._render_history();
+                    });
                     return;
                 }
                 const html = `
@@ -927,6 +967,7 @@ export class ApprovalInbox {
                             <th>${__("Approved At State")}</th>
                             <th>${__("Current State")}</th>
                             <th>${__("Actioned By")}</th>
+                            ${all_users ? `<th>${__("Submitted By")}</th>` : ""}
                             <th>${__("Via Role")}</th>
                         </tr></thead>
                         <tbody>
@@ -939,10 +980,11 @@ export class ApprovalInbox {
                                 <td><span class="ps-ai-state-badge">${esc(row.action_state || "—")}</span></td>
                                 <td><span class="ps-ai-state-badge ps-ai-state-current">${esc(row.current_state || "—")}</span></td>
                                 <td>${esc(row.completed_by || "—")}</td>
+                                ${all_users ? `<td>${esc(row.submitted_by || "—")}</td>` : ""}
                                 <td>${esc(row.role || "—")}</td>
                             </tr>
                             <tr class="ps-ai-hist-detail" data-idx="${i}" style="display:none">
-                                <td colspan="7" class="ps-ai-preview-cell">
+                                <td colspan="${all_users ? 8 : 7}" class="ps-ai-preview-cell">
                                     <div class="ps-ai-life"></div>
                                 </td>
                             </tr>`).join("")}
@@ -950,7 +992,12 @@ export class ApprovalInbox {
                     </table>
                     </div>
                 `;
-                $body.html(html);
+                $body.html(bar + html);
+
+                $body.find(".ps-ai-allusers-chk").on("change", (e) => {
+                    this._history_all_users = $(e.target).is(":checked");
+                    this._render_history();
+                });
 
                 $body.find(".ps-ai-hist-trigger").on("click", (e) => {
                     const $tr = $(e.currentTarget).closest("tr");

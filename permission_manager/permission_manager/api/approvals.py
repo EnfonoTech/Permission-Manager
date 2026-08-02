@@ -14,7 +14,7 @@ directly from the inbox without visiting the form.
 
 import frappe
 from frappe import _
-from frappe.utils import cint, cstr, now_datetime
+from frappe.utils import add_days, cint, cstr, getdate, now_datetime, nowdate
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -393,19 +393,44 @@ def quick_apply_workflow_action(
 # ─── Approval history (what the current user has already acted on) ────────────
 
 @frappe.whitelist()
-def get_my_approval_history(limit: int = 200) -> list:
+def get_my_approval_history(limit: int = 200, all_users: int = 0,
+                            from_date: str = None, to_date: str = None) -> list:
     """
     Return workflow action history visible to the current user:
     - Actions the current user personally completed (approver view)
     - Actions completed on documents the current user submitted (submitter view)
-    - All open+completed actions where the user is a permitted approver
+
+    A System Manager may pass all_users=1 to see everybody's, which is the only way to answer
+    "who approved this last week" without opening each document. It is bounded rather than
+    open-ended: the query is always limited to a date window - the caller's, or the last
+    DEFAULT_HISTORY_DAYS if none is given - and to `limit` rows. A site with a hundred thousand
+    completed actions must not be able to ask for all of them by unticking a box.
     """
     user = frappe.session.user
+    limit = min(cint(limit) or 200, MAX_HISTORY_ROWS)
+
+    all_users = cint(all_users) and "System Manager" in frappe.get_roles(user)
+    window = _history_window(from_date, to_date)
+
+    if all_users:
+        # Everybody's, still inside the window and the row cap.
+        rows = frappe.get_all(
+            "PM Workflow Action",
+            filters=dict({"status": "Completed"}, **window),
+            fields=[
+                "name", "reference_doctype", "reference_name",
+                "workflow_state", "completed_by", "completed_by_role", "modified",
+                "for_submitter",
+            ],
+            order_by="modified desc",
+            limit=limit,
+        )
+        return _shape_history(rows, all_users=True)
 
     # Completed actions where I was the approver
     as_approver = frappe.get_all(
         "PM Workflow Action",
-        filters={"completed_by": user, "status": "Completed"},
+        filters=dict({"completed_by": user, "status": "Completed"}, **window),
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "completed_by", "completed_by_role", "modified",
@@ -417,7 +442,7 @@ def get_my_approval_history(limit: int = 200) -> list:
     # Completed actions on documents I submitted (so submitters see approval history of their docs)
     as_submitter = frappe.get_all(
         "PM Workflow Action",
-        filters={"for_submitter": user, "status": "Completed"},
+        filters=dict({"for_submitter": user, "status": "Completed"}, **window),
         fields=[
             "name", "reference_doctype", "reference_name",
             "workflow_state", "completed_by", "completed_by_role", "modified",
@@ -435,35 +460,76 @@ def get_my_approval_history(limit: int = 200) -> list:
             merged.append(r)
     merged.sort(key=lambda x: x.modified, reverse=True)
 
-    result = []
-    for r in merged[:int(limit)]:
-        completed_by_name = ""
-        if r.completed_by:
-            completed_by_name = (
-                frappe.db.get_value("User", r.completed_by, "full_name")
-                or r.completed_by.split("@")[0]
-            )
-        # Current doc state (what state the document is in NOW — after the action was completed)
-        current_doc_state = ""
-        try:
-            current_doc_state = frappe.db.get_value(
-                r.reference_doctype, r.reference_name, "workflow_state"
-            ) or ""
-        except Exception:
-            pass
+    return _shape_history(merged[:limit], all_users=False)
 
-        result.append({
-            "name":              r.name,
-            "doctype":           r.reference_doctype,
-            "docname":           r.reference_name,
-            "action_state":      r.workflow_state,      # state when action was CREATED
-            "current_state":     current_doc_state,     # state document is in NOW
-            "role":              r.completed_by_role or ("Direct" if r.completed_by else "—"),
-            "completed_by":      completed_by_name,
-            "date":              frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),
-            "doc_url":           f"/app/{_safe_slug(r.reference_doctype)}/{r.reference_name}",
-        })
-    return result
+
+# ── history: bounded, and shaped without a query per row ──────────────────────
+
+MAX_HISTORY_ROWS = 500
+DEFAULT_HISTORY_DAYS = 30
+
+
+def _history_window(from_date, to_date):
+    """A date window is always applied. Without one this query would happily scan every
+    completed action the site has ever recorded, which is the difference between a page that
+    opens and a page that times out."""
+    if from_date and to_date:
+        return {"modified": ["between", [from_date, add_days(getdate(to_date), 1)]]}
+    if from_date:
+        return {"modified": [">=", from_date]}
+    if to_date:
+        return {"modified": ["<", add_days(getdate(to_date), 1)]}
+    return {"modified": [">=", add_days(nowdate(), -DEFAULT_HISTORY_DAYS)]}
+
+
+def _shape_history(rows, all_users=False):
+    """Turn action records into display rows.
+
+    Names and current document states are fetched in bulk. Doing it per row cost two queries
+    each - four hundred for a normal page, a thousand once a System Manager asks for everyone's
+    - and that, not the row count, is what made the tab slow.
+    """
+    users = {r.completed_by for r in rows if r.completed_by}
+    users |= {r.get("for_submitter") for r in rows if r.get("for_submitter")}
+    names = {}
+    if users:
+        for u in frappe.get_all("User", filters={"name": ["in", list(users)]},
+                                fields=["name", "full_name"]):
+            names[u.name] = u.full_name or u.name.split("@")[0]
+
+    # current state of each referenced document, one query per doctype rather than per row
+    by_doctype: dict = {}
+    for r in rows:
+        by_doctype.setdefault(r.reference_doctype, set()).add(r.reference_name)
+    current: dict = {}
+    for dt, docnames in by_doctype.items():
+        try:
+            if not frappe.get_meta(dt).has_field("workflow_state"):
+                continue
+            for d in frappe.get_all(dt, filters={"name": ["in", list(docnames)]},
+                                    fields=["name", "workflow_state"]):
+                current[(dt, d.name)] = d.workflow_state or ""
+        except Exception:
+            # a doctype that has since been removed should not take the whole tab down
+            continue
+
+    out = []
+    for r in rows:
+        row = {
+            "name": r.name,
+            "doctype": r.reference_doctype,
+            "docname": r.reference_name,
+            "action_state": r.workflow_state,
+            "current_state": current.get((r.reference_doctype, r.reference_name), ""),
+            "role": r.completed_by_role or ("Direct" if r.completed_by else "—"),
+            "completed_by": names.get(r.completed_by, "") if r.completed_by else "",
+            "date": frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),
+            "doc_url": "/app/%s/%s" % (_safe_slug(r.reference_doctype), r.reference_name),
+        }
+        if all_users:
+            row["submitted_by"] = names.get(r.get("for_submitter"), r.get("for_submitter") or "")
+        out.append(row)
+    return out
 
 
 # ─── Approval analytics ───────────────────────────────────────────────────────
