@@ -47,3 +47,7 @@
 	font-size: 11px; color: var(--text-muted);
 	padding: 1px 0 1px 10px; border-left: 2px solid var(--gray-200); margin-left: 2px;
 }
+
+/* the chain sits above the field preview, with a rule between them */
+.ps-ai-fields { border-top: 1px solid var(--border-color); padding-top: 8px; }
+.ps-ai-life-loading { font-size: 11px; padding: 4px 0; }

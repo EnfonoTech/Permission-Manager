@@ -460,8 +460,14 @@ export class ApprovalInbox {
             $row.filter(".ps-ai-row").find(".ps-ai-expand-icon").text("▾");
             if ($preview_body.data("loaded")) return;
             $preview_body.data("loaded", true);
-            this._load_lifecycle($preview_body, item);
-            this._load_preview($preview_body, item.doctype, item.docname);
+            // Separate boxes on purpose: _load_preview replaces the whole of whatever it is
+            // given, so sharing one container meant whichever call answered last erased the
+            // other. The chain rendered, then vanished when the field preview landed.
+            $preview_body.html(
+                '<div class="ps-ai-life"></div><div class="ps-ai-fields"></div>'
+            );
+            this._load_lifecycle($preview_body.find(".ps-ai-life"), item);
+            this._load_preview($preview_body.find(".ps-ai-fields"), item.doctype, item.docname);
         });
 
         $row.filter(".ps-ai-row").find(".ps-ai-act-btn").on("click", (e) => {
@@ -485,10 +491,9 @@ export class ApprovalInbox {
     // ── Approval chain ────────────────────────────────────────────────────────
     // Drawn per document, not per workflow: these chains fork on the document itself, so
     // showing every state of the workflow would promise phases this one will never reach.
-    _load_lifecycle($container, item) {
-        const $life = $(`<div class="ps-ai-life"><div class="ps-ai-life-loading text-muted">${
-            __("Loading approval chain…")}</div></div>`);
-        $container.prepend($life);
+    _load_lifecycle($life, item) {
+        $life.html(`<div class="ps-ai-life-loading text-muted">${
+            __("Loading approval chain…")}</div>`);
 
         frappe.call({
             method: "permission_manager.permission_manager.api.approvals.get_document_lifecycle",
