@@ -491,7 +491,8 @@ export class ApprovalInbox {
     // ── Approval chain ────────────────────────────────────────────────────────
     // Drawn per document, not per workflow: these chains fork on the document itself, so
     // showing every state of the workflow would promise phases this one will never reach.
-    _load_lifecycle($life, item) {
+    _load_lifecycle($life, item, opts) {
+        opts = opts || {};
         $life.html(`<div class="ps-ai-life-loading text-muted">${
             __("Loading approval chain…")}</div>`);
 
@@ -545,7 +546,31 @@ export class ApprovalInbox {
                         </div>`;
                 }
 
-                $life.html(`<div class="ps-ai-life-chain">${steps}</div>${holders}`);
+                // Who actually acted, in order. The chain can only show one name per step;
+                // this is the record, and on History it is the point of expanding at all.
+                let trail = "";
+                const events = d.events || [];
+                if (events.length) {
+                    const lines = events.map((ev) => `
+                        <div class="ps-ai-ev">
+                            <span class="ps-ai-ev-dot">✓</span>
+                            <span class="ps-ai-ev-who">${esc(ev.by || ev.user || __("Unknown"))}</span>
+                            ${ev.role ? `<span class="ps-ai-ev-role">${esc(ev.role)}</span>` : ""}
+                            <span class="ps-ai-ev-state">${esc(ev.state || "")}</span>
+                            <span class="ps-ai-ev-on">${esc(ev.on || "")}</span>
+                        </div>`).join("");
+                    const open_by_default = !!opts.history;
+                    trail = `
+                        <div class="ps-ai-who ps-ai-trail">
+                            <div class="ps-ai-who-toggle" role="button" tabindex="0">
+                                <span class="ps-ai-who-caret">${open_by_default ? "▾" : "▸"}</span>
+                                ${__("Approvals performed")} <span class="text-muted">(${events.length})</span>
+                            </div>
+                            <div class="ps-ai-who-body" style="display:${open_by_default ? "block" : "none"}">${lines}</div>
+                        </div>`;
+                }
+
+                $life.html(`<div class="ps-ai-life-chain">${steps}</div>${trail}${holders}`);
                 $life.find(".ps-ai-who-toggle").on("click keypress", function (e) {
                     if (e.type === "keypress" && e.which !== 13 && e.which !== 32) return;
                     const $b = $(this).siblings(".ps-ai-who-body");
@@ -905,20 +930,46 @@ export class ApprovalInbox {
                             <th>${__("Via Role")}</th>
                         </tr></thead>
                         <tbody>
-                        ${rows.map((row) => `<tr>
-                                <td>${esc(row.date)}</td>
+                        ${rows.map((row, i) => `<tr class="ps-ai-hist-row" data-idx="${i}">
+                                <td class="ps-ai-hist-trigger" title="${__("Click to see the full route")}" style="cursor:pointer">
+                                    ${esc(row.date)} <span class="ps-ai-expand-icon">▸</span>
+                                </td>
                                 <td>${esc(row.doctype)}</td>
                                 <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
                                 <td><span class="ps-ai-state-badge">${esc(row.action_state || "—")}</span></td>
                                 <td><span class="ps-ai-state-badge ps-ai-state-current">${esc(row.current_state || "—")}</span></td>
                                 <td>${esc(row.completed_by || "—")}</td>
                                 <td>${esc(row.role || "—")}</td>
+                            </tr>
+                            <tr class="ps-ai-hist-detail" data-idx="${i}" style="display:none">
+                                <td colspan="7" class="ps-ai-preview-cell">
+                                    <div class="ps-ai-life"></div>
+                                </td>
                             </tr>`).join("")}
                         </tbody>
                     </table>
                     </div>
                 `;
                 $body.html(html);
+
+                $body.find(".ps-ai-hist-trigger").on("click", (e) => {
+                    const $tr = $(e.currentTarget).closest("tr");
+                    const idx = $tr.data("idx");
+                    const row = rows[idx];
+                    const $detail = $body.find(`tr.ps-ai-hist-detail[data-idx="${idx}"]`);
+                    const $icon = $tr.find(".ps-ai-expand-icon");
+                    if ($detail.is(":visible")) {
+                        $detail.hide();
+                        $icon.text("▸");
+                        return;
+                    }
+                    $detail.show();
+                    $icon.text("▾");
+                    const $life = $detail.find(".ps-ai-life");
+                    if ($life.data("loaded")) return;
+                    $life.data("loaded", true);
+                    this._load_lifecycle($life, row, { history: true });
+                });
             },
             error: () => $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load history.")}</p></div>`),
         });

@@ -14,7 +14,7 @@ directly from the inbox without visiting the form.
 
 import frappe
 from frappe import _
-from frappe.utils import cstr, now_datetime
+from frappe.utils import cint, cstr, now_datetime
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -828,32 +828,51 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
     ahead = _shortest_path(edges, current or start, finals)
     chain_states = (behind or [current or start]) + (ahead[1:] if len(ahead) > 1 else [])
 
-    # who already acted, so a completed step carries a name and not just a tick
-    done_by = {}
+    # Who already acted. Two shapes of the same facts: `done_by` puts a name on a step of the
+    # chain, `events` is the trail in order - who, in what role, when - which is what History
+    # needs and a chain cannot show, because two people can act at the same state.
+    done_by, events = {}, []
     if frappe.db.table_exists("PM Workflow Action"):
+        meta = frappe.get_meta("PM Workflow Action")
+        fields = ["workflow_state", "completed_by", "modified", "status"]
+        for extra in ("completed_by_role", "action", "completed_action"):
+            if meta.has_field(extra):
+                fields.append(extra)
         for a in frappe.get_all(
             "PM Workflow Action",
             filters={"reference_doctype": doctype, "reference_name": docname,
                      "status": "Completed"},
-            fields=["workflow_state", "completed_by", "modified"],
+            fields=fields,
             order_by="modified asc",
         ):
+            who = ""
             if a.completed_by:
-                done_by[a.workflow_state] = (
-                    frappe.db.get_value("User", a.completed_by, "full_name")
-                    or a.completed_by.split("@")[0]
-                )
+                who = (frappe.db.get_value("User", a.completed_by, "full_name")
+                       or a.completed_by.split("@")[0])
+                done_by[a.workflow_state] = who
+            events.append({
+                "state": a.workflow_state or "",
+                "by": who,
+                "user": a.completed_by or "",
+                "role": a.get("completed_by_role") or "",
+                "action": a.get("action") or a.get("completed_action") or "",
+                "on": frappe.utils.format_datetime(a.modified, "dd/MM/yy HH:mm") if a.modified else "",
+            })
 
     cur_idx = chain_states.index(current) if current in chain_states else 0
+    # A document that has reached a submitting state is finished: marking that last step
+    # "current" would draw it as still waiting on somebody.
+    finished = current in finals or cint(doc.get("docstatus")) == 1
     chain = []
     for i, st in enumerate(chain_states):
         chain.append({
             "state": st,
-            "status": "done" if i < cur_idx else "current" if i == cur_idx else "upcoming",
+            "status": "done" if (i < cur_idx or finished) else "current" if i == cur_idx else "upcoming",
             "roles": sorted(roles_at.get(st, [])),
             "by": done_by.get(st, ""),
             "final": st in finals,
         })
 
     pending_roles = roles_at.get(current, set())
-    return {"chain": chain, "roles": _role_holders(pending_roles), "current": current}
+    return {"chain": chain, "roles": _role_holders(pending_roles),
+            "events": events, "current": current, "finished": bool(finished)}
