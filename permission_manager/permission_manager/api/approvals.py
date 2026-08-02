@@ -425,7 +425,7 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
             order_by="modified desc",
             limit=limit,
         )
-        return _shape_history(rows, all_users=True)
+        return _shape_history(_dedupe_actions(rows), all_users=True)
 
     # Completed actions where I was the approver
     as_approver = frappe.get_all(
@@ -460,7 +460,7 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
             merged.append(r)
     merged.sort(key=lambda x: x.modified, reverse=True)
 
-    return _shape_history(merged[:limit], all_users=False)
+    return _shape_history(_dedupe_actions(merged)[:limit], all_users=False)
 
 
 # ── history: bounded, and shaped without a query per row ──────────────────────
@@ -501,6 +501,25 @@ def _history_window(from_date, to_date):
     if to_date:
         return {"modified": ["<", add_days(getdate(to_date), 1)]}
     return {"modified": [">=", add_days(nowdate(), -DEFAULT_HISTORY_DAYS)]}
+
+
+def _dedupe_actions(rows):
+    """One row per person per stage.
+
+    Forwarding an approval creates a second action record for the same document and the same
+    state - the original and the ad-hoc one - and both are completed, so the tab printed the
+    document twice a minute apart. Two completions at one state by two different people are
+    two real approvals and both are kept; two by the same person are the same approval seen
+    twice, and the later one wins.
+    """
+    seen, kept = set(), []
+    for r in rows:
+        key = (r.reference_doctype, r.reference_name, r.workflow_state, r.completed_by)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(r)
+    return kept
 
 
 def _shape_history(rows, all_users=False):
