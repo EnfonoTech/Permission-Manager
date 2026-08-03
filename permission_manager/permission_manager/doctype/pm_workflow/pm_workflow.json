@@ -13,6 +13,7 @@
   "document_type",
   "is_active",
   "hide_from_approval_inbox",
+  "restrict_editing",
   "override_status",
   "send_email_alert",
   "column_break_aymh",
@@ -66,6 +67,13 @@
    "label": "Hide from Approvals Page",
    "default": "0",
    "description": "Approvals for this document type are not listed on the Approvals page. The workflow still runs and the document is still approved from its own form - only the inbox listing is suppressed. Use for document types that have their own dedicated screen, or whose volume would drown the inbox."
+  },
+  {
+   "fieldname": "restrict_editing",
+   "fieldtype": "Check",
+   "label": "Restrict Editing to the Role on Each State",
+   "default": "0",
+   "description": "Off (the default): while a document is in this workflow, editing follows the normal ERPNext permissions - anyone with write access to the doctype may correct it. On: only the role named in Allow Edit on the document's current state may edit it, and everyone else sees the form read-only.<br><br>Leave it off unless you have a reason to restrict. Allow Edit holds a single role, but a state can have several approvers - a Purchase Invoice at Pending can be approved by any of six roles depending on its group and currency - so restricting makes five of them able to approve a document they cannot correct."
   },
   {
    "default": "0",

@@ -869,12 +869,23 @@ def get_workflow_info(doc: dict | str):
     if state and cint(state.doc_status) != cint(doc.get("docstatus")):
         return None
 
-    allow_edit = False
-    if state:
-        if state.edit_permission_type == "User" and state.allow_edit == user:
-            allow_edit = True
-        elif state.edit_permission_type == "Role" and (state.allow_edit or "").strip() in user_roles:
-            allow_edit = True
+    # Whether the workflow polices editing at all is now a tick box on the workflow, because
+    # Allow Edit holds ONE role while a state can have several approvers. A Purchase Invoice at
+    # Pending is approved by Purchase Assistant, Purchase Approver, Department Head, Branch Head,
+    # Finance Manager or Vehicle Dept Head depending on its group and currency; naming one of
+    # them left the other five able to approve a document they could not correct.
+    #
+    # Off (the default): editing follows the ordinary ERPNext permissions.
+    # On: only the role on the current state may edit, exactly as before.
+    if not cint(workflow.get("restrict_editing")):
+        allow_edit = True
+    else:
+        allow_edit = False
+        if state:
+            if state.edit_permission_type == "User" and state.allow_edit == user:
+                allow_edit = True
+            elif state.edit_permission_type == "Role" and (state.allow_edit or "").strip() in user_roles:
+                allow_edit = True
 
     result = {"workflow": workflow.as_dict(), "current_state": workflow_state}
     if allow_edit:
