@@ -553,12 +553,16 @@ export class ApprovalInbox {
                 let trail = "";
                 const events = d.events || [];
                 if (events.length) {
+                    // "from → to", not a bare state: the state alone read as though it were
+                    // what the person did, which credited rejections to whoever resent them.
                     const lines = events.map((ev) => `
                         <div class="ps-ai-ev">
                             <span class="ps-ai-ev-dot">✓</span>
                             <span class="ps-ai-ev-who">${esc(ev.by || ev.user || __("Unknown"))}</span>
                             ${ev.role ? `<span class="ps-ai-ev-role">${esc(ev.role)}</span>` : ""}
-                            <span class="ps-ai-ev-state">${esc(ev.state || "")}</span>
+                            <span class="ps-ai-ev-state">${esc(ev.state || __("Draft"))}
+                                <span class="ps-ai-ev-arrow">→</span>
+                                <b>${esc(ev.to_state || "")}</b></span>
                             <span class="ps-ai-ev-on">${esc(ev.on || "")}</span>
                         </div>`).join("");
                     const open_by_default = !!opts.history;
@@ -566,7 +570,7 @@ export class ApprovalInbox {
                         <div class="ps-ai-who ps-ai-trail">
                             <div class="ps-ai-who-toggle" role="button" tabindex="0">
                                 <span class="ps-ai-who-caret">${open_by_default ? "▾" : "▸"}</span>
-                                ${__("Approvals performed")} <span class="text-muted">(${events.length})</span>
+                                ${__("What happened, in order")} <span class="text-muted">(${events.length})</span>
                             </div>
                             <div class="ps-ai-who-body" style="display:${open_by_default ? "block" : "none"}">${lines}</div>
                         </div>`;

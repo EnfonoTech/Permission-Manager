@@ -948,36 +948,40 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
     ahead = _shortest_path(edges, current or start, finals)
     chain_states = (behind or [current or start]) + (ahead[1:] if len(ahead) > 1 else [])
 
-    # Who already acted. Two shapes of the same facts: `done_by` puts a name on a step of the
-    # chain, `events` is the trail in order - who, in what role, when - which is what History
-    # needs and a chain cannot show, because two people can act at the same state.
+    # Who already acted, read from the document's own version history rather than from the
+    # action records. An action's workflow_state is the state it was CREATED in - the stage the
+    # person acted FROM - so listing it as though it were the outcome credited the wrong person:
+    # "Shihab / Rejected" meant Shihab resent a rejected advice, not that he rejected it.
+    # A Version row carries the move itself, from one state to the next, with who and when.
     done_by, events = {}, []
-    if frappe.db.table_exists("PM Workflow Action"):
-        meta = frappe.get_meta("PM Workflow Action")
-        fields = ["workflow_state", "completed_by", "modified", "status"]
-        for extra in ("completed_by_role", "action", "completed_action"):
-            if meta.has_field(extra):
-                fields.append(extra)
-        for a in frappe.get_all(
-            "PM Workflow Action",
-            filters={"reference_doctype": doctype, "reference_name": docname,
-                     "status": "Completed"},
-            fields=fields,
-            order_by="modified asc",
-        ):
-            who = ""
-            if a.completed_by:
-                who = (frappe.db.get_value("User", a.completed_by, "full_name")
-                       or a.completed_by.split("@")[0])
-                done_by[a.workflow_state] = who
-            events.append({
-                "state": a.workflow_state or "",
-                "by": who,
-                "user": a.completed_by or "",
-                "role": a.get("completed_by_role") or "",
-                "action": a.get("action") or a.get("completed_action") or "",
-                "on": frappe.utils.format_datetime(a.modified, "dd/MM/yy HH:mm") if a.modified else "",
-            })
+    for v in frappe.get_all(
+        "Version",
+        filters={"ref_doctype": doctype, "docname": docname},
+        fields=["owner", "creation", "data"],
+        order_by="creation asc",
+    ):
+        try:
+            changed = frappe.parse_json(v.data).get("changed") or []
+        except Exception:
+            continue
+        move = next((c for c in changed if c and c[0] == "workflow_state"), None)
+        if not move:
+            continue
+        was, now = move[1] or "", move[2] or ""
+        who = (frappe.db.get_value("User", v.owner, "full_name")
+               or (v.owner or "").split("@")[0])
+        events.append({
+            "by": who,
+            "user": v.owner or "",
+            "role": "",
+            "state": was,
+            "to_state": now,
+            "action": _("{0} to {1}").format(was or _("Draft"), now),
+            "on": frappe.utils.format_datetime(v.creation, "dd/MM/yy HH:mm"),
+        })
+        # the person who moved a document INTO a state is the one who cleared the one before it
+        if was:
+            done_by[was] = who
 
     cur_idx = chain_states.index(current) if current in chain_states else 0
     # A document that has reached a submitting state is finished: marking that last step
