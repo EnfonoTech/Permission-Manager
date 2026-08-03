@@ -819,9 +819,13 @@ def _hidden_doctypes() -> list:
     """Document types whose workflow asks not to appear on the Approvals page."""
     if not frappe.db.has_column("PM Workflow", "hide_from_approval_inbox"):
         return []
+    # Deliberately not restricted to active workflows. Switching a workflow off does not
+    # remove the actions it already created - Payment Request has three still open - so an
+    # inactive workflow is exactly when the flag has to keep working. Requiring is_active here
+    # meant ticking the box did nothing at all for it.
     return frappe.get_all(
         "PM Workflow",
-        filters={"is_active": 1, "hide_from_approval_inbox": 1},
+        filters={"hide_from_approval_inbox": 1},
         pluck="document_type",
     ) or []
 
