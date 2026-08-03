@@ -973,11 +973,18 @@ export class ApprovalInbox {
                         </tr></thead>
                         <tbody>
                         ${rows.map((row, i) => `<tr class="ps-ai-hist-row" data-idx="${i}">
-                                <td class="ps-ai-hist-trigger" title="${__("Click to see the full route")}" style="cursor:pointer">
+                                <td class="ps-ai-hist-trigger" title="${__("Click for the full route and every approval on it")}" style="cursor:pointer">
                                     ${esc(row.date)} <span class="ps-ai-expand-icon">▸</span>
                                 </td>
                                 <td>${esc(row.doctype)}</td>
-                                <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
+                                <td>
+                                    <a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a>
+                                    ${row.event_count > 1
+                                        ? `<span class="ps-ai-steps" title="${
+                                            __("{0} approval steps — expand to see them", [row.event_count])
+                                          }">${row.event_count}</span>`
+                                        : ""}
+                                </td>
                                 <td><span class="ps-ai-state-badge">${esc(row.action_state || "—")}</span></td>
                                 <td><span class="ps-ai-state-badge ps-ai-state-current">${esc(row.current_state || "—")}</span></td>
                                 <td>${esc(row.completed_by || "—")}</td>

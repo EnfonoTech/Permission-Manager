@@ -504,20 +504,29 @@ def _history_window(from_date, to_date):
 
 
 def _dedupe_actions(rows):
-    """One row per person per stage.
+    """One row per voucher, carrying its most recent approval event.
 
-    Forwarding an approval creates a second action record for the same document and the same
-    state - the original and the ad-hoc one - and both are completed, so the tab printed the
-    document twice a minute apart. Two completions at one state by two different people are
-    two real approvals and both are kept; two by the same person are the same approval seen
-    twice, and the later one wins.
+    A document generates an action per stage, and forwarding adds another for the same stage,
+    so the tab used to list the same voucher several times - PA-26-0012-1 twice, once for its
+    rejection and once for its resend. The list is meant to answer "what happened to this
+    document", which is one line per document; the full sequence of who did what and when is in
+    the row's expansion, so nothing is lost by collapsing here.
+
+    Rows arrive newest first, so the first occurrence of a voucher is its latest event. The
+    count of events is carried on the surviving row, so the list can say there is more inside.
     """
+    counts: dict = {}
+    for r in rows:
+        key = (r.reference_doctype, r.reference_name)
+        counts[key] = counts.get(key, 0) + 1
+
     seen, kept = set(), []
     for r in rows:
-        key = (r.reference_doctype, r.reference_name, r.workflow_state, r.completed_by)
+        key = (r.reference_doctype, r.reference_name)
         if key in seen:
             continue
         seen.add(key)
+        r.event_count = counts.get(key, 1)
         kept.append(r)
     return kept
 
@@ -565,6 +574,7 @@ def _shape_history(rows, all_users=False):
             "completed_by": names.get(r.completed_by, "") if r.completed_by else "",
             "date": frappe.utils.format_datetime(r.modified, "dd/MM/yy HH:mm"),
             "doc_url": "/app/%s/%s" % (_safe_slug(r.reference_doctype), r.reference_name),
+            "event_count": cint(r.get("event_count") or 1),
         }
         if all_users:
             row["submitted_by"] = names.get(r.get("for_submitter"), r.get("for_submitter") or "")
