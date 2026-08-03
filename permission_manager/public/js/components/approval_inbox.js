@@ -114,11 +114,14 @@ export class ApprovalInbox {
         this.wrapper.find(".ps-ai-search").on("input", (e) => {
             this._search = $(e.target).val().trim().toLowerCase();
             if (this._active_tab === "pending") this._apply_filter();
+            // History rows are already loaded, so filter what is on screen rather than refetch
+            else if (this._active_tab === "history") this._paint_history();
         });
 
         this.wrapper.find(".ps-ai-dt-filter").on("change", (e) => {
             this._filter_doctype = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
+            else if (this._active_tab === "history") this._paint_history();
         });
 
         this.wrapper.find(".ps-ai-from-date").on("change", (e) => {
@@ -929,8 +932,49 @@ export class ApprovalInbox {
                 this._to_date ? { to_date: this._to_date } : {}
             ),
             callback: (r) => {
-                const rows = r.message || [];
+                // Kept so the search and transaction filters can repaint without refetching.
+                this._history_rows = r.message || [];
+                this._history_showed_all = all_users;
+                this._paint_history();
+            },
+            error: (e) => {
+                console.error("Approval history failed", e);
+                $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load history.")}</p>
+                    <p class="text-muted small">${frappe.utils.escape_html(
+                        (e && e.message) || (e && e.exc_type) || "")}</p></div>`);
+            },
+        });
+    }
 
+    // Filter what is already loaded. The dates are a server concern - they decide which
+    // actions were fetched - but search and transaction only narrow the rows on screen, so
+    // typing does not hit the database on every keystroke.
+    _paint_history() {
+        const $body = this.wrapper.find(".ps-ai-body");
+        const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
+        const all_users = !!this._history_showed_all;
+        const loaded = this._history_rows || [];
+
+        // The dropdown is populated from the Pending tab, so a doctype that only appears in
+        // history could not be selected. Add the missing ones rather than rebuild the list,
+        // which would drop whatever Pending put there.
+        const $dt = this.wrapper.find(".ps-ai-dt-filter");
+        const known = new Set($dt.find("option").map((i, o) => $(o).val()).get());
+        [...new Set(loaded.map((r) => r.doctype))].sort().forEach((d) => {
+            if (d && !known.has(d)) $dt.append(`<option value="${esc(d)}">${esc(d)}</option>`);
+        });
+
+        const term = (this._search || "").trim().toLowerCase();
+        const dt = this._filter_doctype || "";
+        const rows = loaded.filter((row) => {
+            if (dt && row.doctype !== dt) return false;
+            if (!term) return true;
+            return [row.doctype, row.docname, row.completed_by, row.submitted_by,
+                    row.action_state, row.current_state, row.role]
+                .filter(Boolean).join(" ").toLowerCase().includes(term);
+        });
+
+        {
                 const window_note = this._from_date || this._to_date
                     ? __("Showing {0} to {1}", [this._from_date || "…", this._to_date || "…"])
                     : __("Showing the last 30 days — set the dates above for another period");
@@ -944,17 +988,26 @@ export class ApprovalInbox {
 
                 const bar = `<div class="ps-ai-hist-bar">
                         <span class="text-muted">${window_note}${
-                            rows.length >= 500 ? " · " + __("first 500 shown") : ""}</span>
+                            loaded.length >= 500 ? " · " + __("first 500 shown") : ""}${
+                            rows.length !== loaded.length
+                                ? " · " + __("{0} of {1} match the filters", [rows.length, loaded.length])
+                                : ""}</span>
                         ${toggle}
                     </div>`;
 
                 if (!rows.length) {
+                    const filtered_out = loaded.length > 0;
                     $body.html(bar + `<div class="ps-ai-empty"><h4>${
-                        all_users ? __("No approvals in this period.") : __("No approval history yet.")
+                        filtered_out ? __("Nothing matches the filters.")
+                            : all_users ? __("No approvals in this period.")
+                            : __("No approval history yet.")
                     }</h4><p class="text-muted">${
-                        all_users
-                            ? __("Nobody completed an approval in the selected dates.")
-                            : __("Actions appear here once approvals are processed on your documents.")
+                        filtered_out
+                            ? __("{0} rows were loaded for this period. Clear the search or the transaction filter.",
+                                 [loaded.length])
+                            : all_users
+                                ? __("Nobody completed an approval in the selected dates.")
+                                : __("Actions appear here once approvals are processed on your documents.")
                     }</p></div>`);
                     $body.find(".ps-ai-allusers-chk").on("change", (e) => {
                         this._history_all_users = $(e.target).is(":checked");
@@ -1029,14 +1082,7 @@ export class ApprovalInbox {
                     $life.data("loaded", true);
                     this._load_lifecycle($life, row, { history: true });
                 });
-            },
-            error: (e) => {
-                console.error("Approval history failed", e);
-                $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load history.")}</p>
-                    <p class="text-muted small">${frappe.utils.escape_html(
-                        (e && e.message) || (e && e.exc_type) || "")}</p></div>`);
-            },
-        });
+        }
     }
 
     // ── Analytics tab ─────────────────────────────────────────────────────────
