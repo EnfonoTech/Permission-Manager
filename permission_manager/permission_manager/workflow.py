@@ -84,17 +84,27 @@ def get_closest_company_with_workflow(company: str, workflows: list[dict]) -> st
 # ─── Workflow resolution ──────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def get_workflow_name(doctype: str, docname: str | int = None) -> str | None:
+def get_workflow_name(doctype: str, docname: str | int = None, doc=None) -> str | None:
     """Resolve the most specific active PM Workflow for a document.
 
     Resolution order (most specific wins):
       1. Company-specific workflows, ranked by dimension specificity
       2. Global (no-company) workflows, ranked by dimension specificity
+
+    Pass `doc` when the caller already holds the document. A document submitted
+    programmatically runs its before_submit hooks *before* its row is inserted, yet it already
+    carries the name autoname handed it - so reading that name back would look up a row that
+    does not exist yet and throw, taking the whole parent transaction with it.
     """
     if not frappe.db.table_exists("PM Workflow"):
         return None
 
-    doc = frappe.get_doc(doctype, docname) if docname else None
+    if isinstance(doc, str):
+        # Whitelisted, so a caller over HTTP can only ever send a string here. Ignore it and
+        # fall back to the name.
+        doc = None
+    if doc is None and docname and frappe.db.exists(doctype, docname):
+        doc = frappe.get_doc(doctype, docname)
     company = getattr(doc, "company", None) or frappe.defaults.get_user_default("Company")
     project = getattr(doc, "project", None)
     cost_center = getattr(doc, "cost_center", None)
@@ -143,9 +153,16 @@ def get_workflow_name(doctype: str, docname: str | int = None) -> str | None:
 
 
 @frappe.whitelist()
-def get_workflow(doctype: str, docname: str | int = None):
-    workflow_name = get_workflow_name(doctype, docname)
+def get_workflow(doctype: str, docname: str | int = None, doc=None, throw: bool = True):
+    """The PM Workflow governing this document, or nothing if none does.
+
+    `throw=False` is for callers that are only asking whether a workflow applies - a guard that
+    runs on every submit cannot raise merely because this site does not route that doctype.
+    """
+    workflow_name = get_workflow_name(doctype, docname, doc=doc)
     if not workflow_name:
+        if not throw:
+            return None
         frappe.throw(
             _(f"No active PM Workflow found for {doctype}."),
             title=_("Workflow Missing"),
@@ -954,8 +971,20 @@ def validate_submit_state(doc, method=None):
     if doc.doctype not in SUBMIT_GUARD_DOCTYPES:
         return
 
-    workflow = get_workflow(doc.doctype, doc.name)
+    # A journal ERPNext raises and submits inside another document's own transaction - the credit
+    # note behind a Payment Reconciliation, an exchange gain or loss - never has a draft stage
+    # and never has an approver. Refusing it would abort the document the user is actually
+    # working on, and nobody could approve it afterwards, so an approval chain has nothing to say
+    # about it. ERPNext marks every one of these with is_system_generated.
+    if cint(doc.get("is_system_generated")):
+        return
+
+    # Read the workflow off the document in hand. This runs at before_submit, which fires before
+    # the row is inserted when a document is created and submitted in one step, so resolving it
+    # by name would read a row that does not exist yet.
+    workflow = get_workflow(doc.doctype, doc.name, doc=doc, throw=False)
     if not workflow:
+        # Nothing routes this doctype on this site, so there is no approval to protect.
         return
 
     state_name = doc.get(workflow.workflow_state_field)
