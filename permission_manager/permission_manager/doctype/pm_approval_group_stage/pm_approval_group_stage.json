@@ -7,7 +7,8 @@
  "field_order": [
   "approver_role",
   "require_attachment",
-  "require_comment"
+  "require_comment",
+  "allow_self_approval"
  ],
  "fields": [
   {
@@ -31,6 +32,14 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Require Comment"
+  },
+  {
+   "default": "0",
+   "description": "Let this approver clear a document they raised themselves. Off by default: every other stage requires a second person.",
+   "fieldname": "allow_self_approval",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Allow Self Approval"
   }
  ],
  "istable": 1,

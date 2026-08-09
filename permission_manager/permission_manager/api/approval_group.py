@@ -155,12 +155,13 @@ def _t(state, action, nxt, role, cond=None, self_appr=0, attach=0, comment=0, rf
 
 
 def _load_groups():
-	"""{group_name: {"stages": [ {role, attach, comment} ], "templates": [names]}}"""
+	"""{group_name: {"stages": [ {role, attach, comment, self_approval} ], "templates": [names]}}"""
 	out = {}
 	for g in frappe.get_all("PM Approval Group", filters={"disabled": 0},
 	                        fields=["name", "group_name", "journal_templates"]):
 		stages = frappe.get_all("PM Approval Group Stage", filters={"parent": g.name},
-		                        fields=["approver_role", "require_attachment", "require_comment"],
+		                        fields=["approver_role", "require_attachment", "require_comment",
+		                                "allow_self_approval"],
 		                        order_by="idx asc")
 		if not stages:
 			continue
@@ -308,7 +309,11 @@ def _group_stage_transitions(groups, cond_for, level1_state, level2_plus):
 			state = _stage_states(entry, i)
 			nxt = "Approved" if i == n else _stage_states(entry, i + 1)
 			role = sd["approver_role"]
-			tx.append(_t(state, "Approve", nxt, role, cond=cond, attach=int(sd.get("require_attachment") or 0)))
+			# self-approval is off unless the stage asks for it: an approver clearing their own
+			# document collapses the chain to one person, so it stays opt-in per stage
+			tx.append(_t(state, "Approve", nxt, role, cond=cond,
+			             attach=int(sd.get("require_attachment") or 0),
+			             self_appr=int(sd.get("allow_self_approval") or 0)))
 			tx.append(_t(state, "Reject", "Rejected", role, cond=cond, rfc=1, comment=1))
 	return tx
 

@@ -13,7 +13,8 @@ is_generated=1, so the rebuild knows what it owns and what a human added.
 import frappe
 from frappe.tests.utils import FrappeTestCase
 
-from permission_manager.permission_manager.api.approval_group import _build, _st, _t
+from permission_manager.permission_manager.api.approval_group import (
+	_build, _group_stage_transitions, _st, _t)
 
 TARGET = "ToDo"  # any doctype will do: the workflow only needs something to point at
 WF = "Test Carry Over Workflow"
@@ -187,3 +188,49 @@ class TestRebuildCarriesManualRows(FrappeTestCase):
 		_build(TARGET, WF, self.states, self.generated)  # must not raise
 
 		self.assertEqual(len(_signatures(WF)), 2)
+
+
+def _stage(role, self_appr=0, attach=0):
+	return {"approver_role": role, "require_attachment": attach,
+	        "require_comment": 0, "allow_self_approval": self_appr}
+
+
+def _approve_row(rows, state):
+	return next(r for r in rows if r["state"] == state and r["action"] == "Approve")
+
+
+class TestStageSelfApproval(FrappeTestCase):
+	"""Self-approval is opt-in per stage.
+
+	Every generated approver row used to be allow_self_approval=0 with no way to change it:
+	the field was not on PM Approval Group Stage, ticking the generated row was undone by the
+	next rebuild, and a hand-added copy was dropped because allow_self_approval is not part of
+	_ROW_KEY. Stages carry the flag now, so the generator has to honour it.
+	"""
+
+	GROUPS = {"Telecom": {
+		"stages": [_stage("IT Head"), _stage("Bahrain Accountant", self_appr=1)],
+		"templates": ["Telecommunication"]}}
+
+	def _rows(self):
+		return _group_stage_transitions(
+			self.GROUPS,
+			lambda g, c: "doc.from_template in ('Telecommunication',)",
+			"Pending Dept", ["Pending Accounts"])
+
+	def test_stage_without_the_flag_still_needs_a_second_person(self):
+		self.assertEqual(_approve_row(self._rows(), "Pending Dept")["allow_self_approval"], 0)
+
+	def test_flagged_stage_may_clear_its_own_document(self):
+		self.assertEqual(_approve_row(self._rows(), "Pending Accounts")["allow_self_approval"], 1)
+
+	def test_reject_is_never_self_approving(self):
+		for r in self._rows():
+			if r["action"] == "Reject":
+				self.assertEqual(r["allow_self_approval"], 0)
+
+	def test_default_is_off_when_the_stage_omits_the_field(self):
+		rows = _group_stage_transitions(
+			{"Legacy": {"stages": [{"approver_role": "Accountant"}], "templates": ["X"]}},
+			lambda g, c: "doc.from_template in ('X',)", "Pending Dept", ["Pending Accounts"])
+		self.assertEqual(_approve_row(rows, "Pending Dept")["allow_self_approval"], 0)
