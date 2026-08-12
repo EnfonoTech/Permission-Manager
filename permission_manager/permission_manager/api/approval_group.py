@@ -24,7 +24,12 @@ FIELD = "custom_approval_group"
 # ── Fixed (non-group) routing constants ──────────────────────────────────────
 PI_INITIATE_ROLE = "Purchase User"          # creates + sends the invoice
 PI_LOCAL_ROLE = "Purchase Assistant"        # material, company currency (and returns)
-PI_IMPORT_ROLE = "Purchase Manager"         # material, foreign currency
+PI_IMPORT_ROLE = "Purchase Approver"        # material, foreign currency
+# `Purchase Manager` is an ERPNext built-in granted to everyone who touches buying, which is
+# the reason a dedicated approver role exists at all. Sites that never created the dedicated
+# role fall back to the built-in, so this can never generate a transition naming a role that
+# does not exist there.
+PI_IMPORT_ROLE_FALLBACK = "Purchase Manager"
 JE_INITIATE_ROLE = "Accounts User"          # creates + sends / submits normal JVs
 
 # Journal templates that need no approval at all: the initiator (or an Accountant) submits
@@ -322,16 +327,29 @@ def _max_level(groups):
 	return max([len(c["stages"]) for c in groups.values()] + [2])
 
 
+def pi_import_role() -> str:
+	"""The role that approves a foreign-currency material invoice.
+
+	Resolved rather than constant so a site that never created the dedicated approver role
+	keeps the previous built-in behaviour instead of generating a transition pointing at a
+	Role that does not exist there.
+	"""
+	if frappe.db.exists("Role", PI_IMPORT_ROLE):
+		return PI_IMPORT_ROLE
+	return PI_IMPORT_ROLE_FALLBACK
+
+
 def _build_pi(groups):
 	cur = _company_currency()
+	imp = pi_import_role()
 	LOCAL = "doc.is_return or ((not doc.custom_approval_group) and doc.currency == %r)" % cur
 	IMPORT = "(not doc.custom_approval_group) and (not doc.is_return) and doc.currency != %r" % cur
 	tx = [
 		_t("Draft", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1),
 		_t("Pending", "Approve", "Approved", PI_LOCAL_ROLE, cond=LOCAL),
 		_t("Pending", "Reject", "Rejected", PI_LOCAL_ROLE, cond=LOCAL, rfc=1, comment=1),
-		_t("Pending", "Approve", "Approved", PI_IMPORT_ROLE, cond=IMPORT),
-		_t("Pending", "Reject", "Rejected", PI_IMPORT_ROLE, cond=IMPORT, rfc=1, comment=1),
+		_t("Pending", "Approve", "Approved", imp, cond=IMPORT),
+		_t("Pending", "Reject", "Rejected", imp, cond=IMPORT, rfc=1, comment=1),
 	]
 	tx += _group_stage_transitions(
 		groups, lambda g, c: "doc.custom_approval_group == %r" % g,

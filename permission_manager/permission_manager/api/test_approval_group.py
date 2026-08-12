@@ -234,3 +234,41 @@ class TestStageSelfApproval(FrappeTestCase):
 			{"Legacy": {"stages": [{"approver_role": "Accountant"}], "templates": ["X"]}},
 			lambda g, c: "doc.from_template in ('X',)", "Pending Dept", ["Pending Accounts"])
 		self.assertEqual(_approve_row(rows, "Pending Dept")["allow_self_approval"], 0)
+
+
+class TestPIImportApprover(FrappeTestCase):
+	"""Foreign-currency purchase invoices route to the dedicated approver role.
+
+	`Purchase Manager` is an ERPNext built-in held by everyone who touches buying, so using it
+	as the import approver defeats the point of having a dedicated approval role — which is why
+	the local path already uses one (`Purchase Assistant`). The resolver keeps sites that never
+	created the dedicated role on the built-in, so a rebuild there cannot emit a transition
+	naming a Role that does not exist.
+	"""
+
+	def test_dedicated_role_is_used_when_it_exists(self):
+		from permission_manager.permission_manager.api.approval_group import (
+			PI_IMPORT_ROLE, pi_import_role)
+
+		if not frappe.db.exists("Role", PI_IMPORT_ROLE):
+			frappe.get_doc({"doctype": "Role", "role_name": PI_IMPORT_ROLE}).insert(
+				ignore_permissions=True, ignore_if_duplicate=True)
+		self.assertEqual(pi_import_role(), PI_IMPORT_ROLE)
+
+	def test_falls_back_to_the_builtin_when_the_role_is_absent(self):
+		from permission_manager.permission_manager.api import approval_group
+
+		original = approval_group.PI_IMPORT_ROLE
+		approval_group.PI_IMPORT_ROLE = "_Test Role That Does Not Exist"
+		try:
+			self.assertEqual(approval_group.pi_import_role(),
+			                 approval_group.PI_IMPORT_ROLE_FALLBACK)
+		finally:
+			approval_group.PI_IMPORT_ROLE = original
+
+	def test_the_two_paths_do_not_share_a_role(self):
+		"""The whole point: local and import must not collapse onto one approver."""
+		from permission_manager.permission_manager.api.approval_group import (
+			PI_LOCAL_ROLE, pi_import_role)
+
+		self.assertNotEqual(PI_LOCAL_ROLE, pi_import_role())
