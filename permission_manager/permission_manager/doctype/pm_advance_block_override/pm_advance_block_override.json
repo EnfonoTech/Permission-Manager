@@ -1,0 +1,48 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "hash",
+  "creation": "2026-08-13 06:00:00.000000",
+  "default_view": "List",
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": ["override_type", "column_break_ovrd", "override"],
+  "fields": [
+    {
+      "description": "Role or User",
+      "fieldname": "override_type",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Override Type",
+      "options": "DocType",
+      "reqd": 1
+    },
+    {
+      "fieldname": "column_break_ovrd",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "override",
+      "fieldtype": "Dynamic Link",
+      "in_list_view": 1,
+      "label": "Role / User",
+      "options": "override_type",
+      "reqd": 1
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "istable": 1,
+  "links": [],
+  "modified": "2026-08-13 06:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Permission Manager",
+  "name": "PM Advance Block Override",
+  "naming_rule": "Random",
+  "owner": "Administrator",
+  "permissions": [],
+  "row_format": "Dynamic",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": []
+}

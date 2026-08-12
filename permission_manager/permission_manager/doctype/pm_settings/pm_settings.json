@@ -7,7 +7,11 @@
   "ai_section",
   "ai_provider",
   "api_key",
-  "ai_model"
+  "ai_model",
+  "purchase_advance_section",
+  "block_po_with_supplier_advance",
+  "po_advance_block_threshold",
+  "po_advance_block_overrides"
  ],
  "fields": [
   {
@@ -32,12 +36,40 @@
    "fieldname": "ai_model",
    "fieldtype": "Data",
    "label": "Model (optional)",
-   "description": "Leave blank to use the provider default. Examples — Claude: claude-sonnet-4-6, Groq: llama-3.3-70b-versatile"
+   "description": "Leave blank to use the provider default. Examples \u2014 Claude: claude-sonnet-4-6, Groq: llama-3.3-70b-versatile"
+  },
+  {
+   "fieldname": "purchase_advance_section",
+   "fieldtype": "Section Break",
+   "label": "Purchase Advance Control"
+  },
+  {
+   "default": "0",
+   "description": "Refuse a new Purchase Order for a supplier who already holds an advance paid against an earlier order that has not been invoiced yet. The buyer is warned as soon as the supplier is chosen, and the order cannot be saved.",
+   "fieldname": "block_po_with_supplier_advance",
+   "fieldtype": "Check",
+   "label": "Block New Purchase Order When Supplier Holds an Unbilled Advance"
+  },
+  {
+   "default": "0",
+   "depends_on": "block_po_with_supplier_advance",
+   "description": "Advances at or below this figure are ignored, in company currency. Leave at 0 to block on any amount at all \u2014 note that catches trivial balances and invites the override to be clicked through out of habit.",
+   "fieldname": "po_advance_block_threshold",
+   "fieldtype": "Currency",
+   "label": "Ignore Advances Up To"
+  },
+  {
+   "depends_on": "block_po_with_supplier_advance",
+   "description": "Roles or individual users who may raise the order anyway. Everyone else is stopped. Administrator always may.",
+   "fieldname": "po_advance_block_overrides",
+   "fieldtype": "Table",
+   "label": "Allowed to Override",
+   "options": "PM Advance Block Override"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-06-27 00:00:00.000000",
+ "modified": "2026-08-13 06:00:00.000000",
  "modified_by": "Administrator",
  "module": "Permission Manager",
  "name": "PM Settings",

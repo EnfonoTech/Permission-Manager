@@ -48,6 +48,9 @@ doctype_js = {
     # parked in a PM Workflow state leaves the request reading Pending / 0% and invites a
     # duplicate. This warns on the request itself.
     "Material Request":  "public/js/material_request_transfer_warning.js",
+    # warns as soon as a supplier is chosen that they already hold an unbilled advance;
+    # the refusal itself is server-side, in api/po_advance_block.py
+    "Purchase Order":    "public/js/po_advance_block.js",
 }
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -124,6 +127,10 @@ doc_events = {
     # Tag fixed-asset POs with the Asset group so they route Dept Head → GM → Accountant.
     "Purchase Order": {
         "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_purchase_order",
+        # validate, not before_submit: the requirement is that the order cannot be SAVED
+        # for a supplier already holding an unbilled advance, so a draft cannot be parked
+        # either. Off unless PM Settings enables it.
+        "validate":      "permission_manager.permission_manager.api.po_advance_block.validate_purchase_order",
     },
     # Categorise supplier payments (advance / PI payment / due) for the Payment Entry workflow.
     "Payment Entry": {
