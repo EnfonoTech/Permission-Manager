@@ -7,16 +7,20 @@
   "doctype": "DocType",
   "editable_grid": 1,
   "engine": "InnoDB",
-  "field_order": ["override_type", "column_break_ovrd", "override"],
+  "field_order": [
+    "override_type",
+    "column_break_ovrd",
+    "override"
+  ],
   "fields": [
     {
-      "description": "Role or User",
       "fieldname": "override_type",
-      "fieldtype": "Link",
+      "fieldtype": "Select",
       "in_list_view": 1,
       "label": "Override Type",
-      "options": "DocType",
-      "reqd": 1
+      "options": "Role\nUser",
+      "reqd": 1,
+      "default": "Role"
     },
     {
       "fieldname": "column_break_ovrd",
@@ -34,7 +38,7 @@
   "index_web_pages_for_search": 1,
   "istable": 1,
   "links": [],
-  "modified": "2026-08-13 06:00:00.000000",
+  "modified": "2026-08-13 06:50:00.000000",
   "modified_by": "Administrator",
   "module": "Permission Manager",
   "name": "PM Advance Block Override",
