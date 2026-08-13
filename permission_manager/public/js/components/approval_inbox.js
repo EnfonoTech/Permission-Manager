@@ -121,7 +121,11 @@ export class ApprovalInbox {
         this.wrapper.find(".ps-ai-dt-filter").on("change", (e) => {
             this._filter_doctype = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
-            else if (this._active_tab === "history") this._paint_history();
+            // Refetch rather than repaint: the server filters by transaction now, and the row cap
+            // counts documents, so asking it for one type returns that type's whole history
+            // instead of whatever survived a general cap. A dropdown changes rarely, unlike the
+            // search box, so a round trip here costs nothing.
+            else if (this._active_tab === "history") this._render_history();
         });
 
         this.wrapper.find(".ps-ai-from-date").on("change", (e) => {
@@ -146,8 +150,13 @@ export class ApprovalInbox {
     }
 
     _switch_tab(tab) {
+        // History uses these controls as much as Pending does — the dates decide which actions
+        // are fetched and the transaction type is now applied by the server. Hiding the row while
+        // still honouring its values is what made History look arbitrarily narrowed: a type picked
+        // on Pending carried over with no visible control to explain it, and the tab could only
+        // report "N of M match the filters" without showing the filters.
         const $search_row = this.wrapper.find(".ps-ai-search, .ps-ai-dt-filter, .ps-ai-date-range");
-        $search_row.toggle(tab === "pending");
+        $search_row.toggle(tab === "pending" || tab === "history");
         this.wrapper.find(".ps-ai-stats-bar").toggle(tab === "pending");
 
         if (tab === "pending") {
@@ -929,7 +938,8 @@ export class ApprovalInbox {
             args: Object.assign(
                 { limit: 500, all_users: all_users ? 1 : 0 },
                 this._from_date ? { from_date: this._from_date } : {},
-                this._to_date ? { to_date: this._to_date } : {}
+                this._to_date ? { to_date: this._to_date } : {},
+                this._filter_doctype ? { reference_doctype: this._filter_doctype } : {}
             ),
             callback: (r) => {
                 // Kept so the search and transaction filters can repaint without refetching.
