@@ -141,6 +141,12 @@ def process_workflow_actions(doc, state):
                 _wf.workflow_state_field, initial_state,
                 update_modified=False,
             )
+            # Also on the in-memory document. db_set writes the row, not the object, and
+            # everything below re-reads the state off `doc` — on an insert that left the
+            # object blank, so no transition was found and no action was ever created. The
+            # document only picked up an approver on some later save, which is why a
+            # document created once and left alone never appeared in the approval inbox.
+            doc.set(_wf.workflow_state_field, initial_state)
             current_state = initial_state
 
     # Close Open AND Forwarded actions from previous states, stamp who triggered the transition.
@@ -165,7 +171,7 @@ def process_workflow_actions(doc, state):
     )
     clear_doctype_notifications("PM Workflow Action")
 
-    next_transitions = get_next_possible_transitions(workflow, get_doc_workflow_state(doc), doc)
+    next_transitions = get_next_possible_transitions(workflow, current_state, doc)
     if not next_transitions:
         return
 
@@ -188,7 +194,7 @@ def process_workflow_actions(doc, state):
 
     if send_email_alert(workflow) and frappe.db.get_value(
         "PM Workflow Document State",
-        filters={"parent": workflow, "state": get_doc_workflow_state(doc)},
+        filters={"parent": workflow, "state": current_state},
         fieldname="send_email",
     ):
         enqueue(
