@@ -406,9 +406,23 @@ def quick_apply_workflow_action(
 
 # ─── Approval history (what the current user has already acted on) ────────────
 
+_HISTORY_FIELDS = [
+    "name", "reference_doctype", "reference_name",
+    "workflow_state", "completed_by", "completed_by_role", "modified",
+    "for_submitter",
+]
+
+# How deep the scan goes before the document cap is applied. The cap counts vouchers, but the
+# rows have to be read to know which vouchers they belong to, and a document under a long
+# approval chain contributes several. Generous enough to cover a busy month, bounded so a site
+# with years of history still cannot ask for all of it.
+_HISTORY_SCAN_ROWS = 5000
+
+
 @frappe.whitelist()
 def get_my_approval_history(limit: int = 200, all_users: int = 0,
-                            from_date: str = None, to_date: str = None) -> list:
+                            from_date: str = None, to_date: str = None,
+                            reference_doctype: str = None) -> list:
     """
     Return workflow action history visible to the current user:
     - Actions the current user personally completed (approver view)
@@ -416,9 +430,19 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
 
     A System Manager may pass all_users=1 to see everybody's, which is the only way to answer
     "who approved this last week" without opening each document. It is bounded rather than
-    open-ended: the query is always limited to a date window - the caller's, or the last
-    DEFAULT_HISTORY_DAYS if none is given - and to `limit` rows. A site with a hundred thousand
-    completed actions must not be able to ask for all of them by unticking a box.
+    open-ended: always to a date window - the caller's, or the last DEFAULT_HISTORY_DAYS - and
+    to `limit` documents.
+
+    `limit` counts DOCUMENTS, not action rows. It used to cap the rows fetched, and the tab
+    then collapsed those rows to one line per document, which meant a busy doctype could crowd
+    every other one out of the answer: with a few hundred Stock Entry and Journal Entry
+    completions in a month, only 7 of 62 completed Payment Advice approvals survived into the
+    rows the browser received, and no filtering in the browser could bring the rest back
+    because they had never been sent. Counting documents makes the cap mean what the list
+    shows.
+
+    `reference_doctype` narrows the query itself, so picking a transaction type returns that
+    type's history rather than whatever of it happened to fall inside a general row cap.
     """
     user = frappe.session.user
     limit = min(cint(limit) or 200, MAX_HISTORY_ROWS)
@@ -426,55 +450,42 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
     all_users = cint(all_users) and "System Manager" in frappe.get_roles(user)
     window = _history_window(from_date, to_date)
 
-    if all_users:
-        # Everybody's, still inside the window and the row cap.
-        rows = frappe.get_all(
+    base = dict({"status": "Completed"}, **window)
+    if not _blank(reference_doctype):
+        base["reference_doctype"] = reference_doctype
+
+    # Own view reads two scopes: what I approved, and what happened to what I submitted.
+    scopes = [base] if all_users else [
+        dict(base, completed_by=user),
+        dict(base, for_submitter=user),
+    ]
+
+    rows, seen_names = [], set()
+    for filters in scopes:
+        for row in frappe.get_all(
             "PM Workflow Action",
-            filters=dict({"status": "Completed"}, **window),
-            fields=[
-                "name", "reference_doctype", "reference_name",
-                "workflow_state", "completed_by", "completed_by_role", "modified",
-                "for_submitter",
-            ],
+            filters=filters,
+            fields=_HISTORY_FIELDS,
             order_by="modified desc",
-            limit=limit,
-        )
-        return _shape_history(_dedupe_actions(rows), all_users=True)
+            limit=_HISTORY_SCAN_ROWS,
+        ):
+            if row.name not in seen_names:
+                seen_names.add(row.name)
+                rows.append(row)
 
-    # Completed actions where I was the approver
-    as_approver = frappe.get_all(
-        "PM Workflow Action",
-        filters=dict({"completed_by": user, "status": "Completed"}, **window),
-        fields=[
-            "name", "reference_doctype", "reference_name",
-            "workflow_state", "completed_by", "completed_by_role", "modified",
-        ],
-        order_by="modified desc",
-        limit=int(limit),
-    )
+    rows.sort(key=lambda r: r.modified, reverse=True)
 
-    # Completed actions on documents I submitted (so submitters see approval history of their docs)
-    as_submitter = frappe.get_all(
-        "PM Workflow Action",
-        filters=dict({"for_submitter": user, "status": "Completed"}, **window),
-        fields=[
-            "name", "reference_doctype", "reference_name",
-            "workflow_state", "completed_by", "completed_by_role", "modified",
-        ],
-        order_by="modified desc",
-        limit=int(limit),
-    )
+    # Keep every event of the newest `limit` documents, so the per-document event count and the
+    # row expansion still see the whole chain rather than a truncated tail of it.
+    keep_docs = set()
+    for row in rows:
+        key = (row.reference_doctype, row.reference_name)
+        if key not in keep_docs and len(keep_docs) < limit:
+            keep_docs.add(key)
 
-    # Merge, deduplicate, sort newest first
-    seen = set()
-    merged = []
-    for r in as_approver + as_submitter:
-        if r.name not in seen:
-            seen.add(r.name)
-            merged.append(r)
-    merged.sort(key=lambda x: x.modified, reverse=True)
+    rows = [r for r in rows if (r.reference_doctype, r.reference_name) in keep_docs]
 
-    return _shape_history(_dedupe_actions(merged)[:limit], all_users=False)
+    return _shape_history(_dedupe_actions(rows), all_users=all_users)
 
 
 # ── history: bounded, and shaped without a query per row ──────────────────────
