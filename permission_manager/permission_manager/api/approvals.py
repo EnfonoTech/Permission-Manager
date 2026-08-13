@@ -65,20 +65,30 @@ def _only_pending_docs(actions: list) -> list:
     for a in actions:
         if a.reference_doctype and a.reference_name:
             by_dt.setdefault(a.reference_doctype, set()).add(a.reference_name)
-    draft_docs: set = set()
+    draft_docs: dict = {}
     for dt, names in by_dt.items():
         try:
             rows = frappe.get_all(dt, filters={"name": ["in", list(names)]},
-                                  fields=["name", "docstatus"])
+                                  fields=["name", "docstatus", "creation"])
             for r in rows:
                 if r.docstatus == 0:
-                    draft_docs.add((dt, r.name))
+                    draft_docs[(dt, r.name)] = r.creation
         except Exception:
             frappe.clear_last_message()
             for n in names:            # fail open — cannot verify, keep it
-                draft_docs.add((dt, n))
-    return [a for a in actions
-            if (a.reference_doctype, a.reference_name) in draft_docs]
+                draft_docs[(dt, n)] = None
+
+    # Carry the DOCUMENT's own creation back onto the action. The inbox dates each row by
+    # when the document was raised, not by when its action row happened to be written —
+    # those diverge whenever an action is created later than the document, and then a
+    # three-week-old entry reads as today with nought days waiting.
+    kept = []
+    for a in actions:
+        key = (a.reference_doctype, a.reference_name)
+        if key in draft_docs:
+            a.doc_creation = draft_docs[key]
+            kept.append(a)
+    return kept
 
 
 # ─── Main API ─────────────────────────────────────────────────────────────────
@@ -322,8 +332,12 @@ def get_my_pending_approvals() -> dict:
                 or holder_user.split("@")[0]
             )
 
-        # Days waiting since action was created
-        days = int((today_dt - act.creation).total_seconds() / 86400) if act.creation else 0
+        # Dated by the document, falling back to the action row only when the document's
+        # own timestamp could not be read.
+        dated_on = act.get("doc_creation") or act.creation
+
+        # Days waiting since the document was raised
+        days = int((today_dt - dated_on).total_seconds() / 86400) if dated_on else 0
 
         # Available transitions
         trans_info      = dt_state_map.get((doctype, state), {"actions": [], "roles": []})
@@ -338,8 +352,8 @@ def get_my_pending_approvals() -> dict:
             "name":              act.name,
             "doctype":           doctype,
             "docname":           docname,
-            "date":              frappe.utils.format_datetime(act.creation, "dd/MM/yy HH:mm"),
-            "creation_iso":      str(act.creation)[:10],
+            "date":              frappe.utils.format_datetime(dated_on, "dd/MM/yy HH:mm"),
+            "creation_iso":      str(dated_on)[:10],
             "priority":          priority,
             "state":             state,
             "role_id":           role_id,
