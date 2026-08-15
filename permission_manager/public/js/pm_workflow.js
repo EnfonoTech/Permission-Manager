@@ -32,14 +32,13 @@ const _pm_governed_doctypes = new Set(
 function _pm_hide_native_submit(frm) {
 	if (!frm.__pm_has_workflow && !_pm_governed_doctypes.has(frm.doctype)) return;
 	if (frm.doc.docstatus !== 0) return;
-	if (frm.is_dirty && frm.is_dirty()) return; // primary action is Save — leave it alone
-
-	// Submit is the only button here that is ours to take away. Core puts SAVE in the same slot
-	// whenever it decides the user cannot submit — a clean draft belonging to someone without
-	// submit permission, for instance — and clearing that leaves them no way to save their own
-	// work. get_action_status() has already run by now (refresh_header fires before the
-	// form-refresh event this file listens to), so current_status is the button on screen.
-	if (frm.toolbar && frm.toolbar.current_status !== "Submit") return;
+	// Dirty means the primary action is SAVE and the user has work to keep — never touch it.
+	// Clean means the slot holds Submit, or the Save that core paints for someone who cannot
+	// submit; neither belongs on a document whose only way forward is an approval action. This
+	// is core's own rule for a workflow doctype (toolbar.js get_action_status: "show the save
+	// button if there is no workflow or if there is a workflow and there are changes") — it
+	// simply never applies here, because core only counts its own Workflow doctype.
+	if (frm.is_dirty && frm.is_dirty()) return;
 
 	frm.page.clear_primary_action();
 	frm.__pm_cleared_primary = true;
