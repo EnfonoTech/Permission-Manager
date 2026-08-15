@@ -907,6 +907,17 @@ def get_workflow_info(doc: dict | str):
     result = {"workflow": workflow.as_dict(), "current_state": workflow_state}
     if allow_edit:
         result["allow_edit"] = allow_edit
+
+    # Send the transitions with the workflow. The form used to ask for them in a second call
+    # made from the first one's callback, so the toolbar sat unsettled for two round trips and
+    # had twice as many chances to be painted with an answer meant for the document the user
+    # had already navigated away from. A failure here is not worth losing the whole reply over:
+    # the form falls back to its own lookup when the key is missing.
+    try:
+        result["transitions"] = get_transitions(doc, workflow.name, workflow_state)
+    except Exception:
+        frappe.clear_last_message()
+
     return result
 
 

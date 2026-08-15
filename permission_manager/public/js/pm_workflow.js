@@ -17,16 +17,76 @@
 //     race, which is why the flag is remembered and re-applied on every later refresh.
 //   * clear_primary_action() removes whatever the primary button currently is. On a dirty
 //     form that is SAVE, so clearing unconditionally would leave the user unable to save.
+
+// Doctypes seen to be governed by a workflow in this tab. The per-document flag is cleared on
+// every navigation (below), so without this memo the native Submit would flash back on screen
+// for one round trip each time you open another document of a doctype already known to route.
+// If the answer then says this particular document is not governed, _pm_restore_native puts the
+// button back.
+const _pm_governed_doctypes = new Set();
+
 function _pm_hide_native_submit(frm) {
-	if (!frm.__pm_has_workflow) return;
+	if (!frm.__pm_has_workflow && !_pm_governed_doctypes.has(frm.doctype)) return;
 	if (frm.doc.docstatus !== 0) return;
 	if (frm.is_dirty && frm.is_dirty()) return; // primary action is Save — leave it alone
 	frm.page.clear_primary_action();
+	frm.__pm_cleared_primary = true;
+}
+
+// Frappe keeps ONE form object per doctype and re-points it at each document you open, while
+// every lookup below is asynchronous. Without a stamp, the answer for the invoice you just
+// left arrives after the next one has rendered and writes its buttons, its approver banner and
+// its indicator onto the document now on screen — which is why approved invoices showed action
+// items that disappeared on a hard refresh, and why drafts only got theirs after one.
+//
+// Every refresh takes a ticket. A response is applied only while it is still the current one
+// AND still describes the document on screen.
+function _pm_ticket(frm) {
+	frm.__pm_seq = (frm.__pm_seq || 0) + 1;
+	return { seq: frm.__pm_seq, docname: frm.doc.name };
+}
+
+function _pm_is_current(frm, ticket) {
+	return !!ticket && ticket.seq === frm.__pm_seq && ticket.docname === frm.doc.name;
+}
+
+// Everything this file puts on the form, taken back off in one place. Anything added above has
+// to be removed here too, or it survives into the next document.
+function _pm_teardown(frm) {
+	frm.__pm_has_workflow = false;
+	frm._pm_transitions = [];
+	frm.page.clear_actions_menu();
+	frm.$wrapper.find(".pm-approver-info").remove();
+	frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
+	frm.remove_custom_button(__("Reassign Approver"));
+}
+
+// No workflow governs this document, so give the toolbar back to Frappe — otherwise a document
+// we suppressed Submit on earlier keeps a toolbar with no way forward at all.
+function _pm_restore_native(frm) {
+	if (!frm.__pm_cleared_primary) return;
+	frm.__pm_cleared_primary = false;
+	try {
+		frm.toolbar && frm.toolbar.set_primary_action && frm.toolbar.set_primary_action();
+	} catch (err) {
+		console.warn("Permission Manager: could not restore the native primary action:", err);
+	}
 }
 
 $(document).on("form-refresh", function (event, frm) {
 	if (!frm || !frm.doctype) return;
 	if (frm.doc.__islocal) return;
+
+	// A different document on the same reused form object: strip the previous one's buttons
+	// before anything is fetched. On a refresh of the SAME document the existing items are left
+	// in place until the fresh answer arrives, so saving does not make them blink.
+	if (frm.__pm_last_docname !== frm.doc.name) {
+		_pm_teardown(frm);
+		frm.__pm_cleared_primary = false;
+	}
+	frm.__pm_last_docname = frm.doc.name;
+
+	const ticket = _pm_ticket(frm);
 
 	// already known to be under a workflow: clear now, before the round-trip below, and once
 	// more on the next tick in case Frappe re-renders the toolbar after this handler
@@ -38,28 +98,40 @@ $(document).on("form-refresh", function (event, frm) {
 			method: "permission_manager.permission_manager.workflow.get_workflow_info",
 			args: { doc: frm.doc },
 			callback(res) {
-				if (!res?.message?.workflow && !res?.message?.current_state) return;
+				if (!_pm_is_current(frm, ticket)) return;
 
-				const workflow = res.message.workflow;
-				const workflow_name = res.message.workflow.name;
-				const current_state = res.message.current_state;
+				const workflow = res?.message?.workflow;
+				const workflow_name = workflow?.name;
+				const current_state = res?.message?.current_state;
+
+				// Nothing routes this document — most often a submitted one whose state no
+				// longer matches its docstatus. Clear ours out rather than leaving the last
+				// document's approval furniture standing on it.
+				if (!workflow_name) {
+					_pm_teardown(frm);
+					_pm_restore_native(frm);
+					return;
+				}
 
 				if (!res.message.allow_edit) {
 					frm.set_read_only(true);
 				}
 
-				if (workflow_name) {
-					frm.__pm_has_workflow = true;
-					_pm_hide_native_submit(frm);
-					setTimeout(() => _pm_hide_native_submit(frm), 0);
-					if (!workflow.override_status) {
-						_override_document_status(frm, current_state, workflow.workflow_state_field);
-					}
-					_load_allowed_transitions(frm, workflow, current_state);
-					_load_pending_approver_info(frm);
-				} else {
-					frm.__pm_has_workflow = false;
+				frm.__pm_has_workflow = true;
+				_pm_governed_doctypes.add(frm.doctype);
+				_pm_hide_native_submit(frm);
+				setTimeout(() => _pm_hide_native_submit(frm), 0);
+				if (!workflow.override_status) {
+					_override_document_status(frm, current_state, workflow.workflow_state_field, ticket);
 				}
+				// The server sends the transitions with the workflow now; the separate lookup
+				// stays as a fallback so an older bundle and a newer server still agree.
+				if (Array.isArray(res.message.transitions)) {
+					_apply_transitions(frm, res.message.transitions, current_state, ticket);
+				} else {
+					_load_allowed_transitions(frm, workflow, current_state, ticket);
+				}
+				_load_pending_approver_info(frm, ticket);
 			},
 		});
 	} catch (err) {
@@ -104,43 +176,62 @@ function _check_mandatory(frm) {
 
 // ─── Load transitions ─────────────────────────────────────────────────────────
 
-function _load_allowed_transitions(frm, workflow, current_state) {
+function _load_allowed_transitions(frm, workflow, current_state, ticket) {
 	frappe.call({
 		method: "permission_manager.permission_manager.workflow.get_transitions",
 		args: { doc: frm.doc, workflow: workflow.name, current_state: current_state },
 		callback(r) {
-			const transitions = r.message || [];
-			frm.page.clear_actions_menu();
-			frm._pm_transitions = transitions;
-			if (!transitions.length) return;
-
-			transitions.forEach((t) => {
-				frm.page.add_action_item(__(t.action), function () {
-					frm.selected_workflow_action = t.action;
-					if (!_check_mandatory(frm)) return;
-					_open_comment_dialog(frm, t);
-				});
-			});
-
-			// Nudge the user to act after they attach a supporting file
-			_pm_hook_attachment_announcement(frm);
-
-			_add_workflow_help_action(frm, transitions, current_state);
+			if (!_pm_is_current(frm, ticket)) return;
+			_apply_transitions(frm, r.message || [], current_state, ticket);
 		},
 	});
 }
 
+function _apply_transitions(frm, transitions, current_state, ticket) {
+	if (!_pm_is_current(frm, ticket)) return;
+
+	frm.page.clear_actions_menu();
+	frm._pm_transitions = transitions;
+	if (!transitions.length) return;
+
+	transitions.forEach((t) => {
+		frm.page.add_action_item(__(t.action), function () {
+			frm.selected_workflow_action = t.action;
+			if (!_check_mandatory(frm)) return;
+			_open_comment_dialog(frm, t);
+		});
+	});
+
+	// Nudge the user to act after they attach a supporting file
+	_pm_hook_attachment_announcement(frm);
+
+	_add_workflow_help_action(frm, transitions, current_state);
+}
+
 // ─── Pending approver info + reassign ────────────────────────────────────────
 
-function _load_pending_approver_info(frm) {
-	if (frm.doc.docstatus !== 0) return;
+function _load_pending_approver_info(frm, ticket) {
+	// A submitted or cancelled document has nobody pending on it. Take the banner down rather
+	// than returning early — it is the reason an approved invoice still read
+	// "Pending approval from: Purchase User" until the page was reloaded.
+	if (frm.doc.docstatus !== 0) {
+		frm.$wrapper.find(".pm-approver-info").remove();
+		frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
+		return;
+	}
 
 	frappe.call({
 		method: "permission_manager.permission_manager.workflow.get_pending_workflow_action",
 		args: { doctype: frm.doctype, docname: frm.doc.name },
 		callback(r) {
+			if (!_pm_is_current(frm, ticket)) return;
+
 			const action = r.message;
-			if (!action) return;
+			if (!action) {
+				frm.$wrapper.find(".pm-approver-info").remove();
+				frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
+				return;
+			}
 
 			const assigned_to   = action.assigned_to;
 			const assigned_name = action.assigned_to_name || (assigned_to || "").split("@")[0];
@@ -264,7 +355,16 @@ function _add_workflow_help_action(frm, transitions, current_state) {
 
 // ─── Document status indicator ────────────────────────────────────────────────
 
-function _override_document_status(frm, current_state, workflow_state_field) {
+const _PM_STATE_COLOURS = {
+	Success: "green", Warning: "orange", Danger: "red",
+	Primary: "blue", Inverse: "black", Info: "light-blue",
+};
+
+// Workflow State styles never change while a tab is open, so look each one up once instead of
+// on every form refresh — one fewer round trip in the window where the toolbar is unsettled.
+const _pm_state_style_cache = {};
+
+function _override_document_status(frm, current_state, workflow_state_field, ticket) {
 	try {
 		const doc = frm.doc;
 		const doctype = frm.doctype;
@@ -278,16 +378,24 @@ function _override_document_status(frm, current_state, workflow_state_field) {
 		}
 
 		if (current_state) {
+			const paint = (style) => {
+				if (!_pm_is_current(frm, ticket)) return;
+				const color = _PM_STATE_COLOURS[style] || "gray";
+				frm.page.set_indicator?.(__(current_state), color, `${workflow_state_field},=,${current_state}`);
+			};
+
+			if (Object.prototype.hasOwnProperty.call(_pm_state_style_cache, current_state)) {
+				paint(_pm_state_style_cache[current_state]);
+				return;
+			}
+
 			frappe.call({
 				method: "frappe.client.get_value",
 				args: { doctype: "Workflow State", fieldname: "style", filters: { name: current_state } },
 				callback(r) {
-					const color_map = {
-						Success: "green", Warning: "orange", Danger: "red",
-						Primary: "blue", Inverse: "black", Info: "light-blue",
-					};
-					const color = color_map[r?.message?.style] || "gray";
-					frm.page.set_indicator?.(__(current_state), color, `${workflow_state_field},=,${current_state}`);
+					const style = r?.message?.style || null;
+					_pm_state_style_cache[current_state] = style;
+					paint(style);
 				},
 			});
 			return;
