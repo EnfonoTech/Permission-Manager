@@ -1,6 +1,7 @@
 """Session boot additions for Permission Manager."""
 
 import frappe
+from frappe.utils import nowdate
 
 
 def boot_session(bootinfo):
@@ -55,7 +56,11 @@ def _backdate_allowances() -> dict:
         return {}
 
     settings = _settings()
-    out = {}
+    # The server's today, not the browser's. The validator compares against frappe.utils
+    # nowdate() in the site's timezone; a form that works out its own date from the machine it
+    # is running on can land a day out and lock the field to a value the server then refuses,
+    # leaving the user unable to save and unable to correct it.
+    out = {"today": nowdate(), "doctypes": {}}
     for doctype in doctypes:
         days = allowed_backdate_days(doctype, frappe.session.user, settings)
         if days is None or days < 0:
@@ -63,6 +68,6 @@ def _backdate_allowances() -> dict:
         date_field = resolve_date_field(doctype, _rules_for(doctype, settings))
         if not date_field:
             continue
-        out[doctype] = {"days": days, "date_field": date_field}
+        out["doctypes"][doctype] = {"days": days, "date_field": date_field}
 
-    return out
+    return out if out["doctypes"] else {}
