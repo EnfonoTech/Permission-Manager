@@ -20,6 +20,26 @@ _CACHE_TTL = 300
 # turns the switch on does not suddenly refuse every user it has no rule for.
 NO_LIMIT = -1
 
+# What the switch covers when nobody has named anything. The money and stock vouchers, because
+# those are what a backdating control exists for.
+#
+# Deliberately absent: HR and payroll documents, which are dated in the past as a matter of
+# course (attendance for last week, a salary slip for last month), and Period Closing Voucher,
+# which is dated at the period end by definition. Naming them in PM Settings covers them; being
+# silent about them here means turning the switch on does not quietly break payroll.
+DEFAULT_COVERED_DOCTYPES = (
+    "Journal Entry",
+    "Payment Entry",
+    "Sales Invoice",
+    "Purchase Invoice",
+    "Sales Order",
+    "Purchase Order",
+    "Delivery Note",
+    "Purchase Receipt",
+    "Stock Entry",
+    "Payment Advice",
+)
+
 
 def _settings():
     try:
@@ -44,11 +64,29 @@ def get_restricted_doctypes() -> set:
     doctypes = set()
     settings = _settings()
     if settings and cint(settings.get("enforce_backdate_control")):
+        # The switch covers documents by itself — rules below it grant backdating to named
+        # roles and users, they do not decide what is covered. Otherwise turning the control on
+        # would do nothing at all until someone also wrote a rule, which is not what "restrict
+        # backdated entries" says.
         doctypes = {
+            row.document_type
+            for row in (settings.get("backdate_doctypes") or [])
+            if row.document_type
+        }
+        if not doctypes:
+            doctypes = set(DEFAULT_COVERED_DOCTYPES)
+
+        # A rule may reach a doctype outside the covered set; honour it rather than ignoring a
+        # row somebody deliberately wrote.
+        doctypes |= {
             rule.document_type
             for rule in (settings.get("backdate_rules") or [])
             if cint(rule.enabled) and rule.document_type
         }
+
+        # Drop anything this site does not have installed, so a default set naming Payment
+        # Advice costs nothing on a bench without sf_trading.
+        doctypes = {dt for dt in doctypes if frappe.db.exists("DocType", dt)}
 
     frappe.cache().set_value(_CACHE_KEY, list(doctypes), expires_in_sec=_CACHE_TTL)
     return doctypes
@@ -89,7 +127,11 @@ def resolve_date_field(doctype, rules=None):
 
 
 def allowed_backdate_days(doctype, user=None, settings=None):
-    """Days of backdating this user gets on this doctype, or None when it is unrestricted.
+    """Days of backdating this user gets on this doctype.
+
+    Assumes the doctype is covered — callers check that against get_restricted_doctypes()
+    first. A covered doctype that no rule mentions is not unrestricted: it falls to the
+    fallback, because the switch is what covers documents and the rules only grant.
 
     Several rules may name the same user — one by role, one by name, or two roles they hold.
     The most generous wins: these grant permission, so holding another role must never take
@@ -97,8 +139,6 @@ def allowed_backdate_days(doctype, user=None, settings=None):
     """
     settings = settings or _settings()
     rules = _rules_for(doctype, settings)
-    if not rules:
-        return None
 
     user = user or frappe.session.user
     roles = set(frappe.get_roles(user))

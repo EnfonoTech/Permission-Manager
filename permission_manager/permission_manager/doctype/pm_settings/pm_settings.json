@@ -14,6 +14,7 @@
   "po_advance_block_overrides",
   "backdate_section",
   "enforce_backdate_control",
+  "backdate_doctypes",
   "default_backdate_days",
   "allow_amendment_on_original_date",
   "backdate_rules"
@@ -106,6 +107,14 @@
    "fieldname": "allow_amendment_on_original_date",
    "fieldtype": "Check",
    "label": "Allow Amendments to Keep the Original Date"
+  },
+  {
+   "depends_on": "enforce_backdate_control",
+   "description": "Which documents the control covers. Leave empty to cover the standard accounting and stock vouchers (Journal Entry, Payment Entry, Sales and Purchase Invoice, Sales and Purchase Order, Delivery Note, Purchase Receipt, Stock Entry, Payment Advice). Anything named by a rule below is always covered as well. HR, payroll and period-close documents are deliberately not in the default set — add them here if you want them.",
+   "fieldname": "backdate_doctypes",
+   "fieldtype": "Table MultiSelect",
+   "label": "Applies To These Documents",
+   "options": "PM Backdate Doctype"
   }
  ],
  "issingle": 1,

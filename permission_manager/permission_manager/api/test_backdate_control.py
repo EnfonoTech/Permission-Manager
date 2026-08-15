@@ -3,6 +3,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, getdate, nowdate
 
 from permission_manager.permission_manager.api.backdate_control import (
+	DEFAULT_COVERED_DOCTYPES,
 	NO_LIMIT,
 	allowed_backdate_days,
 	resolve_date_field,
@@ -32,10 +33,12 @@ def _rule(doctype="Purchase Invoice", applies_to="Role", value="Accounts User", 
 
 
 class TestBackdateControl(FrappeTestCase):
-	def test_doctype_with_no_rule_is_unrestricted(self):
-		settings = _settings([_rule(doctype="Purchase Invoice")])
+	def test_covered_doctype_with_no_rule_falls_to_the_default(self):
+		"""The switch covers documents; rules only grant. So a covered doctype nobody wrote a
+		rule for is not unrestricted — it gets the fallback."""
+		settings = _settings([_rule(doctype="Purchase Invoice")], default_days=0)
 
-		self.assertIsNone(allowed_backdate_days("Journal Entry", "Administrator", settings))
+		self.assertEqual(allowed_backdate_days("Journal Entry", "Administrator", settings), 0)
 
 	def test_role_rule_grants_its_days(self):
 		settings = _settings([_rule(value="Accounts User", days=7)])
@@ -68,9 +71,9 @@ class TestBackdateControl(FrappeTestCase):
 		)
 
 	def test_disabled_rule_is_ignored(self):
-		settings = _settings([_rule(value="Accounts User", days=5, enabled=0)])
+		settings = _settings([_rule(value="Accounts User", days=5, enabled=0)], default_days=0)
 
-		self.assertIsNone(allowed_backdate_days("Purchase Invoice", "Administrator", settings))
+		self.assertEqual(allowed_backdate_days("Purchase Invoice", "Administrator", settings), 0)
 
 	def test_fallback_applies_to_users_no_rule_matches(self):
 		settings = _settings(
@@ -96,3 +99,10 @@ class TestBackdateControl(FrappeTestCase):
 
 		self.assertGreaterEqual(getdate(earliest), earliest)
 		self.assertLess(getdate(add_days(earliest, -1)), earliest)
+
+	def test_default_cover_is_vouchers_not_payroll(self):
+		"""Turning the switch on must not quietly start refusing backdated attendance."""
+		self.assertIn("Journal Entry", DEFAULT_COVERED_DOCTYPES)
+		self.assertIn("Purchase Invoice", DEFAULT_COVERED_DOCTYPES)
+		for hr in ("Attendance", "Salary Slip", "Leave Application", "Period Closing Voucher"):
+			self.assertNotIn(hr, DEFAULT_COVERED_DOCTYPES)
