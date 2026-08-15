@@ -34,6 +34,10 @@ add_to_apps_screen = [
 ]
 
 # ─── Desk-wide JS / CSS bundles ───────────────────────────────────────────────
+# Which doctypes an approval workflow governs, so the form can keep core's Submit button off
+# the screen from the first paint instead of one round trip later.
+extend_bootinfo = "permission_manager.permission_manager.boot.boot_session"
+
 app_include_js = [
     "permission_manager.bundle.js",
 ]
