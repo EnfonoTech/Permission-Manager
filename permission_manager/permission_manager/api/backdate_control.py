@@ -166,6 +166,16 @@ def validate_posting_date(doc, method=None):
         if before and before.get(fieldname) and getdate(before.get(fieldname)) == getdate(value):
             return
 
+    # An amendment is a new document, so without this it is judged like any other entry and
+    # correcting an old one needs an allowance that reaches back to it. Optionally let it keep
+    # the date of the document it amends — the entry already stands on that date, so nothing new
+    # is being backdated. Moving it further back than the original is refused either way, which
+    # is what stops cancel-and-amend being used as a way in.
+    if doc.get("amended_from") and cint(settings and settings.get("allow_amendment_on_original_date")):
+        original = frappe.db.get_value(doc.doctype, doc.amended_from, fieldname)
+        if original and getdate(original) == getdate(value):
+            return
+
     days = allowed_backdate_days(doctype, user, settings)
     if days is None or days < 0:
         return

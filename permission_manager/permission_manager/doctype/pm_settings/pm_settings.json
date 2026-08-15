@@ -15,6 +15,7 @@
   "backdate_section",
   "enforce_backdate_control",
   "default_backdate_days",
+  "allow_amendment_on_original_date",
   "backdate_rules"
  ],
  "fields": [
@@ -97,6 +98,14 @@
    "fieldtype": "Table",
    "label": "Backdating Rules",
    "options": "PM Backdate Rule"
+  },
+  {
+   "default": "0",
+   "depends_on": "enforce_backdate_control",
+   "description": "Let an amended document keep the date of the document it amends, however far back that is. Off: an amendment is judged like any other entry, so correcting an old document needs an allowance that reaches it. On either setting, moving the date further back than the original is still refused. Note that an amendment may change the amount, so leaving this on allows an old entry to be restated without one.",
+   "fieldname": "allow_amendment_on_original_date",
+   "fieldtype": "Check",
+   "label": "Allow Amendments to Keep the Original Date"
   }
  ],
  "issingle": 1,
