@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-08-15 22:40:00.000000",
+ "default_view": "List",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "document_type",
+  "applies_to",
+  "applies_to_value",
+  "max_backdate_days",
+  "column_break_bdr",
+  "date_field"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Document Type",
+   "options": "DocType",
+   "reqd": 1
+  },
+  {
+   "default": "Role",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Applies To",
+   "options": "Role\nUser",
+   "reqd": 1
+  },
+  {
+   "description": "The role, or the individual user, this allowance is granted to.",
+   "fieldname": "applies_to_value",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Role / User",
+   "options": "applies_to",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "How many days before today this role or user may date a document. 0 allows today only. Where several rules match a user, the most generous one wins.",
+   "fieldname": "max_backdate_days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Backdating Allowed (Days)"
+  },
+  {
+   "fieldname": "column_break_bdr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Leave blank to use the document's own dating field: posting_date where it exists, otherwise transaction_date.",
+   "fieldname": "date_field",
+   "fieldtype": "Data",
+   "label": "Date Field"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-08-15 22:40:00.000000",
+ "modified_by": "Administrator",
+ "module": "Permission Manager",
+ "name": "PM Backdate Rule",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

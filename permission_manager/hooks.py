@@ -136,8 +136,17 @@ doc_events = {
     "Payment Entry": {
         "before_save":   "permission_manager.permission_manager.api.approval_group.stamp_payment_entry",
     },
+    # Clearing the cached list of doctypes the backdate rules name
+    "PM Settings": {
+        "on_update": "permission_manager.permission_manager.api.backdate_control.clear_backdate_cache",
+    },
     # PM Workflow engine — fires on every doctype
     "*": {
+        # how far back a document may be dated, by role or by user. Costs one cached set
+        # lookup on a doctype nobody has written a rule for.
+        "validate": [
+            "permission_manager.permission_manager.api.backdate_control.validate_posting_date",
+        ],
         # a document under an approval workflow may only be submitted from a state that
         # carries doc_status 1; otherwise ERPNext's Submit button walks past the chain
         "before_submit": [

@@ -11,7 +11,11 @@
   "purchase_advance_section",
   "block_po_with_supplier_advance",
   "po_advance_block_threshold",
-  "po_advance_block_overrides"
+  "po_advance_block_overrides",
+  "backdate_section",
+  "enforce_backdate_control",
+  "default_backdate_days",
+  "backdate_rules"
  ],
  "fields": [
   {
@@ -36,7 +40,7 @@
    "fieldname": "ai_model",
    "fieldtype": "Data",
    "label": "Model (optional)",
-   "description": "Leave blank to use the provider default. Examples \u2014 Claude: claude-sonnet-4-6, Groq: llama-3.3-70b-versatile"
+   "description": "Leave blank to use the provider default. Examples — Claude: claude-sonnet-4-6, Groq: llama-3.3-70b-versatile"
   },
   {
    "fieldname": "purchase_advance_section",
@@ -53,7 +57,7 @@
   {
    "default": "0",
    "depends_on": "block_po_with_supplier_advance",
-   "description": "Advances at or below this figure are ignored, in company currency. Leave at 0 to block on any amount at all \u2014 note that catches trivial balances and invites the override to be clicked through out of habit.",
+   "description": "Advances at or below this figure are ignored, in company currency. Leave at 0 to block on any amount at all — note that catches trivial balances and invites the override to be clicked through out of habit.",
    "fieldname": "po_advance_block_threshold",
    "fieldtype": "Currency",
    "label": "Ignore Advances Up To"
@@ -65,6 +69,34 @@
    "fieldtype": "Table",
    "label": "Allowed to Override",
    "options": "PM Advance Block Override"
+  },
+  {
+   "fieldname": "backdate_section",
+   "fieldtype": "Section Break",
+   "label": "Backdated Entry Control"
+  },
+  {
+   "default": "0",
+   "description": "Limit how far back a document may be dated. Off by default; nothing is enforced until a rule below names the doctype.",
+   "fieldname": "enforce_backdate_control",
+   "fieldtype": "Check",
+   "label": "Restrict Backdated Entries"
+  },
+  {
+   "default": "-1",
+   "depends_on": "enforce_backdate_control",
+   "description": "Applied to a user who matches no rule for a doctype that has rules. -1 leaves them unrestricted; 0 allows today only.",
+   "fieldname": "default_backdate_days",
+   "fieldtype": "Int",
+   "label": "Default Backdating for Everyone Else (Days)"
+  },
+  {
+   "depends_on": "enforce_backdate_control",
+   "description": "One row per doctype and per role or user. A doctype named by no row is not restricted at all. Administrator always may.",
+   "fieldname": "backdate_rules",
+   "fieldtype": "Table",
+   "label": "Backdating Rules",
+   "options": "PM Backdate Rule"
   }
  ],
  "issingle": 1,
