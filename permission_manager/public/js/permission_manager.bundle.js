@@ -4,6 +4,7 @@
 // a new content-hash filename — automatic cache busting in production.
 
 import "./pm_workflow";            // workflow action buttons on all doc forms
+import "./pm_backdate";           // lock the date field where backdating is not allowed
 import "./pm_realtime";            // real-time approval inbox notifications
 import { MatrixView } from "./components/matrix_view";
 import { WhyExplainer } from "./components/why_explainer";

@@ -23,3 +23,46 @@ def boot_session(bootinfo):
         # a boot that fails takes the whole desk with it — never worth that
         bootinfo.pm_workflow_doctypes = []
         frappe.log_error(title="Permission Manager: could not boot workflow doctypes")
+
+    try:
+        bootinfo.pm_backdate = _backdate_allowances()
+    except Exception:
+        bootinfo.pm_backdate = {}
+        frappe.log_error(title="Permission Manager: could not boot backdate allowances")
+
+
+def _backdate_allowances() -> dict:
+    """This user's backdating allowance per restricted doctype, for the form to act on.
+
+    Sent at boot so the date field can be settled before it is drawn rather than after a
+    round trip, and so a user with no allowance is never offered a date they cannot keep. The
+    server-side check in api/backdate_control.py remains the actual gate — this only stops the
+    form inviting an entry that would be refused.
+    """
+    from permission_manager.permission_manager.api.backdate_control import (
+        allowed_backdate_days,
+        get_restricted_doctypes,
+        resolve_date_field,
+        _rules_for,
+        _settings,
+    )
+
+    if frappe.session.user == "Administrator":
+        return {}
+
+    doctypes = get_restricted_doctypes()
+    if not doctypes:
+        return {}
+
+    settings = _settings()
+    out = {}
+    for doctype in doctypes:
+        days = allowed_backdate_days(doctype, frappe.session.user, settings)
+        if days is None or days < 0:
+            continue  # unrestricted for this user
+        date_field = resolve_date_field(doctype, _rules_for(doctype, settings))
+        if not date_field:
+            continue
+        out[doctype] = {"days": days, "date_field": date_field}
+
+    return out
