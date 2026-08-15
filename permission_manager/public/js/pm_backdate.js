@@ -56,4 +56,16 @@ $(document).on("form-refresh", function (event, frm) {
 		"description",
 		__("Backdating is not enabled for you. Ask an administrator to grant it in PM Settings.")
 	);
+
+	// "Edit Posting Date and Time" hands the date straight back. erpnext's stock_controller
+	// (setup_posting_date_time_check) re-enables posting_date the moment that box is ticked, and
+	// this file only runs on form refresh, so the lock above would last until the user found the
+	// tick box. Take the box away as well, and erpnext's own else-branch then keeps the date
+	// read-only for us.
+	if (frm.fields_dict.set_posting_time) {
+		if (frm.doc.set_posting_time) {
+			frm.set_value("set_posting_time", 0);
+		}
+		frm.set_df_property("set_posting_time", "read_only", 1);
+	}
 });
