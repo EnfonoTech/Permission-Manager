@@ -1,28 +1,56 @@
-// Do not offer a return the save is going to refuse.
+// Do not offer a return the server is going to refuse.
 //
-// The refusal itself is server-side (api/sales_return_control.py) and fires on save. On its own
-// that means somebody opens Create → Return / Credit Note on a five-week-old invoice, fills in a
-// credit note, and only then finds out the window closed — and, worse, an Administrator is
-// allowed to override and so sees nothing happen at all, which reads as a control that is not
-// working.
+// The refusal is server-side and in two places: the endpoint that builds the credit note
+// (api/sales_return_control.make_sales_return) and the save of the return itself. This file is
+// only about not offering the action in the first place, and about saying why.
 //
-// So the invoice asks the question up front. Past the window and not allowed to override: the
-// action is taken off the Create menu and the reason is shown on the form. Past the window but
-// allowed to override: the action stays, with an orange note saying it is an override — the
-// server says the same thing again when the return is saved.
+// Removing the button after the fact does not work. ERPNext adds Return / Credit Note inside the
+// Sales Invoice controller's own refresh (erpnext/accounts/doctype/sales_invoice/sales_invoice.js),
+// synchronously, and the toolbar is rebuilt on every render — so a removal that runs a moment
+// later (this one has to, it needs an answer from the server) removes a button that is then
+// painted again by the next render, and no amount of retrying settles it.
+//
+// So the add itself is intercepted instead. While a document is flagged as blocked, the page
+// refuses to paint that one button, however many times anything asks it to. The flag is per
+// document and is re-read on every refresh; every other button goes through untouched.
+
+const PM_RETURN_LABEL = "Return / Credit Note";
+
+function pm_guard_return_button(frm) {
+	if (frm.__pm_return_button_guarded) return;
+	frm.__pm_return_button_guarded = true;
+
+	const original = frm.page.add_inner_button.bind(frm.page);
+	frm.page.add_inner_button = function (label, action, group, type) {
+		if (frm.__pm_block_return_button && label === __(PM_RETURN_LABEL)) {
+			return;
+		}
+		return original(label, action, group, type);
+	};
+}
 
 frappe.ui.form.on("Sales Invoice", {
+	onload(frm) {
+		pm_guard_return_button(frm);
+	},
+
 	refresh(frm) {
-		if (frm.doc.docstatus !== 1 || frm.doc.is_return) return;
+		pm_guard_return_button(frm);
+
+		if (frm.doc.docstatus !== 1 || frm.doc.is_return) {
+			frm.__pm_block_return_button = false;
+			return;
+		}
 
 		const ticket = frm.doc.name;
-		// Frappe re-adds the Create menu on every render, so the answer is remembered and
-		// re-applied rather than looked up again on each refresh.
+		// One form object serves every document of this doctype, so the answer is remembered
+		// against the document it belongs to and the flag re-applied on each render.
 		if (frm.__pm_return_window && frm.__pm_return_window.name === ticket) {
 			pm_apply_return_window(frm, frm.__pm_return_window.state);
 			return;
 		}
 
+		frm.__pm_block_return_button = false;
 		frappe.call({
 			method:
 				"permission_manager.permission_manager.api.sales_return_control.check_source_return_window",
@@ -38,33 +66,27 @@ frappe.ui.form.on("Sales Invoice", {
 });
 
 function pm_apply_return_window(frm, state) {
+	frm.__pm_block_return_button = !!(state.enabled && state.blocked);
+
 	if (!state.enabled || !state.past_window) return;
 
 	const basis =
 		state.basis === "Return Posting Date"
 			? __("the return's own posting date")
 			: __("this invoice's date");
+	const past_by = state.age - state.days;
 
 	if (state.blocked) {
-		// Frappe re-paints the Create menu on every render, and this answer arrives after a round
-		// trip — so the removal is repeated across the next few frames rather than once. Even if a
-		// re-paint outruns all of them, the endpoint behind the action refuses anyway
-		// (api/sales_return_control.make_sales_return), so the worst case is a button that
-		// explains itself instead of a button that is not there.
-		const strip = () => frm.remove_custom_button(__("Return / Credit Note"), __("Create"));
-		strip();
-		[0, 100, 400, 1000].forEach((delay) => setTimeout(strip, delay));
+		// already painted by an earlier render, before the answer arrived
+		frm.remove_custom_button(__(PM_RETURN_LABEL), __("Create"));
 
 		frm.dashboard.add_indicator(
 			__("Return window closed — {0} days old, limit {1}", [state.age, state.days]),
 			"red"
 		);
-		// The same banner the override case gets, so the reason is on the form either way rather
-		// than only in the refusal that arrives after a click. Permanent: it is a standing fact
-		// about this invoice, not a passing notice.
 		frm.dashboard.add_comment(
 			__("A return against this invoice would be {0} day(s) past the {1} day window, counted from {2}. Ask someone authorised to override the sales return window.", [
-				state.age - state.days,
+				past_by,
 				state.days,
 				basis,
 			]),
@@ -80,7 +102,7 @@ function pm_apply_return_window(frm, state) {
 	);
 	frm.dashboard.add_comment(
 		__("A return against this invoice is {0} day(s) past the {1} day window, counted from {2}. You are allowed to raise one anyway.", [
-			state.age - state.days,
+			past_by,
 			state.days,
 			basis,
 		]),
