@@ -95,6 +95,16 @@ fixtures = [
     },
 ]
 
+# ─── Overridden endpoints ─────────────────────────────────────────────────────
+# The return window is enforced on save and the invoice form hides the action once the window has
+# closed — but a form script only helps once the browser has it, and Frappe re-paints the Create
+# menu on every render. Standing in for erpnext's endpoint puts the same answer at the one point
+# that cannot be stale: the request that builds the credit note.
+override_whitelisted_methods = {
+    "erpnext.accounts.doctype.sales_invoice.sales_invoice.make_sales_return":
+        "permission_manager.permission_manager.api.sales_return_control.make_sales_return",
+}
+
 # ─── Permission query conditions ──────────────────────────────────────────────
 permission_query_conditions = {
     "Leave Application": "permission_manager.permission_manager.ladder_approve.leave_application.api.leave_application_permission_query",

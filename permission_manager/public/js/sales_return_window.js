@@ -46,10 +46,14 @@ function pm_apply_return_window(frm, state) {
 			: __("this invoice's date");
 
 	if (state.blocked) {
-		// take the action away, twice — Frappe paints the menu after this handler as well
+		// Frappe re-paints the Create menu on every render, and this answer arrives after a round
+		// trip — so the removal is repeated across the next few frames rather than once. Even if a
+		// re-paint outruns all of them, the endpoint behind the action refuses anyway
+		// (api/sales_return_control.make_sales_return), so the worst case is a button that
+		// explains itself instead of a button that is not there.
 		const strip = () => frm.remove_custom_button(__("Return / Credit Note"), __("Create"));
 		strip();
-		setTimeout(strip, 0);
+		[0, 100, 400, 1000].forEach((delay) => setTimeout(strip, delay));
 
 		frm.dashboard.add_indicator(
 			__("Return window closed — {0} days old, limit {1}", [state.age, state.days]),

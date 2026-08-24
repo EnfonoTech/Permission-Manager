@@ -140,6 +140,72 @@ def validate_return_window(doc, method=None):
 
 
 @frappe.whitelist()
+def make_sales_return(source_name, target_doc=None):
+    """ERPNext's Return / Credit Note action, refused before it builds anything.
+
+    The window is enforced on save, and the form takes the action off the Create menu when the
+    window has closed -- but a form script only helps once the browser has it, and Frappe re-paints
+    that menu on every render. This is the same answer given at the only point that cannot be
+    missed or out of date: the request that builds the credit note. Registered through
+    override_whitelisted_methods, so it stands in for erpnext's own endpoint.
+    """
+    guard_return_creation("Sales Invoice", source_name)
+
+    from erpnext.accounts.doctype.sales_invoice.sales_invoice import (
+        make_sales_return as erpnext_make_sales_return,
+    )
+
+    return erpnext_make_sales_return(source_name, target_doc)
+
+
+def guard_return_creation(doctype: str, source_name: str):
+    """Refuse to start a return on a document whose window has closed."""
+    if not source_name or not is_enabled():
+        return
+
+    state = _window_state(doctype, source_name)
+    if not state["past_window"]:
+        return
+
+    if state["can_override"]:
+        frappe.msgprint(
+            _("This invoice is {0} day(s) old and the return window is {1} day(s). Allowed because "
+              "you may override it.").format(state["age"], state["days"]),
+            title=_("Return Window Overridden"),
+            indicator="orange",
+        )
+        return
+
+    frappe.throw(
+        _("{0} {1} is {2} day(s) old. A return may only be raised within {3} day(s) of it.").format(
+            _(doctype), frappe.bold(source_name), state["age"], state["days"]
+        )
+        + "<br><br>"
+        + _("Ask someone authorised to override the sales return window."),
+        title=_("Return Window Has Passed"),
+    )
+
+
+def _window_state(doctype: str, docname: str) -> dict:
+    """Where a return raised today against this document would stand."""
+    probe = frappe._dict(
+        doctype=doctype, docstatus=0, is_return=1, return_against=docname, posting_date=nowdate()
+    )
+    age = age_in_days(probe)
+    days = allowed_days()
+    can_override = may_override()
+    return {
+        "enabled": True,
+        "days": days,
+        "age": age,
+        "can_override": can_override,
+        "past_window": bool(age is not None and age > days),
+        "blocked": bool(age is not None and age > days and not can_override),
+        "basis": counted_from(),
+    }
+
+
+@frappe.whitelist()
 def check_source_return_window(doctype: str, docname: str) -> dict:
     """Would a return raised today against this document be refused?
 
@@ -151,22 +217,7 @@ def check_source_return_window(doctype: str, docname: str) -> dict:
     if not is_enabled():
         return {"enabled": False, "blocked": False}
 
-    probe = frappe._dict(
-        doctype=doctype, docstatus=0, is_return=1, return_against=docname, posting_date=nowdate()
-    )
-    age = age_in_days(probe)
-    days = allowed_days()
-    can_override = may_override()
-
-    return {
-        "enabled": True,
-        "days": days,
-        "age": age,
-        "can_override": can_override,
-        "past_window": bool(age is not None and age > days),
-        "blocked": bool(age is not None and age > days and not can_override),
-        "basis": counted_from(),
-    }
+    return _window_state(doctype, docname)
 
 
 @frappe.whitelist()
