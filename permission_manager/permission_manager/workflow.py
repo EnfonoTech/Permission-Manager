@@ -45,6 +45,22 @@ def clear_workflow_doctype_cache():
     frappe.cache().delete_value(_CACHE_KEY)
 
 
+def workflow_applies(doctype: str, doc=None) -> bool:
+    """Whether a PM Workflow on this doctype governs this document.
+
+    Everything is routed unless a feature says otherwise, so a failure here must never take a
+    document down with it: a broken answer would silently unroute an approval chain, which is
+    worse than routing one document too many.
+    """
+    try:
+        from permission_manager.permission_manager.api.sales_return_approval import workflow_applies as _applies
+
+        return _applies(doctype, doc)
+    except Exception:
+        frappe.log_error(title="Permission Manager: workflow applicability check failed")
+        return True
+
+
 # ─── State / field helpers ────────────────────────────────────────────────────
 
 def get_doc_workflow_state(doc):
@@ -109,6 +125,14 @@ def get_workflow_name(doctype: str, docname: str | int = None, doc=None) -> str 
     project = getattr(doc, "project", None)
     cost_center = getattr(doc, "cost_center", None)
     user = getattr(doc, "owner", None) or frappe.session.user
+
+    # A workflow is defined per doctype, but a doctype is not always routed as a whole: a
+    # Sales Invoice workflow is meant for returns above a threshold, not for every sale. The
+    # gate answers for the document in hand, and answering None here settles the entire
+    # surface at once -- the form restores its native Submit and the submit guard has no state
+    # to refuse. See api/sales_return_approval.py.
+    if not workflow_applies(doctype, doc):
+        return None
 
     workflows = frappe.get_all(
         "PM Workflow",
@@ -977,9 +1001,37 @@ def is_transition_condition_satisfied(transition, doc) -> bool:
 SUBMIT_GUARD_DOCTYPES = ("Journal Entry",)
 
 
+def _is_guarded_sales_return(doc) -> bool:
+    """Whether this document is a sales return the approval setting has taken charge of.
+
+    Answered without a single import or query for every other doctype: this runs on the
+    before_submit of everything on the site.
+    """
+    if doc.doctype != "Sales Invoice" or not cint(doc.get("is_return")):
+        return False
+
+    try:
+        from permission_manager.permission_manager.api.sales_return_approval import needs_approval
+
+        return needs_approval(doc)
+    except Exception:
+        frappe.log_error(title="Permission Manager: sales return approval check failed")
+        return False
+
+
+def _must_have_workflow(doc) -> bool:
+    try:
+        from permission_manager.permission_manager.api.sales_return_approval import must_have_workflow
+
+        return must_have_workflow(doc)
+    except Exception:
+        return False
+
+
 def validate_submit_state(doc, method=None):
     """Refuse a submit from a workflow state that is not a submitting state."""
-    if doc.doctype not in SUBMIT_GUARD_DOCTYPES:
+    guarded_return = _is_guarded_sales_return(doc)
+    if doc.doctype not in SUBMIT_GUARD_DOCTYPES and not guarded_return:
         return
 
     # A journal ERPNext raises and submits inside another document's own transaction - the credit
@@ -995,6 +1047,20 @@ def validate_submit_state(doc, method=None):
     # by name would read a row that does not exist yet.
     workflow = get_workflow(doc.doctype, doc.name, doc=doc, throw=False)
     if not workflow:
+        # A return that needs approval and has no workflow to approve it is refused rather
+        # than let through: the setting says the approval is mandatory, and an unapproved
+        # credit note is exactly what it exists to prevent.
+        if guarded_return and _must_have_workflow(doc):
+            from permission_manager.permission_manager.api.sales_return_approval import (
+                no_workflow_message,
+            )
+
+            frappe.throw(
+                no_workflow_message(doc)
+                + "<br><br>"
+                + _("Ask a System Manager to configure the approval workflow for it."),
+                title=_("Approval Required"),
+            )
         # Nothing routes this doctype on this site, so there is no approval to protect.
         return
 

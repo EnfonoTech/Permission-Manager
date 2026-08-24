@@ -22,7 +22,12 @@
   "restrict_sales_return",
   "sales_return_days",
   "sales_return_days_from",
-  "sales_return_overrides"
+  "sales_return_overrides",
+  "si_return_approval_section",
+  "si_return_approval_enabled",
+  "si_return_amount_restriction",
+  "si_return_approval_threshold",
+  "si_return_requires_workflow"
  ],
  "fields": [
   {
@@ -157,6 +162,42 @@
    "fieldtype": "Table",
    "label": "Allowed to Override",
    "options": "PM Advance Block Override"
+  },
+  {
+   "fieldname": "si_return_approval_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Return Approval"
+  },
+  {
+   "default": "0",
+   "description": "Send Sales Invoice returns through the PM Workflow for this doctype instead of letting them be submitted directly. While this is on, a PM Workflow on Sales Invoice governs returns only — ordinary invoices keep their own Submit button.",
+   "fieldname": "si_return_approval_enabled",
+   "fieldtype": "Check",
+   "label": "Sales Return Approval Enabled"
+  },
+  {
+   "default": "1",
+   "depends_on": "si_return_approval_enabled",
+   "description": "Only returns above the threshold need approval. Off, and every return does.",
+   "fieldname": "si_return_amount_restriction",
+   "fieldtype": "Check",
+   "label": "Restrict by Return Amount"
+  },
+  {
+   "default": "500",
+   "depends_on": "eval:doc.si_return_approval_enabled && doc.si_return_amount_restriction",
+   "description": "In company currency. A return of this amount or less is submitted directly; above it, approval is required.",
+   "fieldname": "si_return_approval_threshold",
+   "fieldtype": "Currency",
+   "label": "Approval Threshold"
+  },
+  {
+   "default": "1",
+   "depends_on": "si_return_approval_enabled",
+   "description": "Refuse a return that needs approval when no active PM Workflow covers Sales Invoice, instead of letting it through unapproved. Untick only while a workflow is being set up.",
+   "fieldname": "si_return_requires_workflow",
+   "fieldtype": "Check",
+   "label": "PM Workflow Approval Mandatory Above the Threshold"
   }
  ],
  "issingle": 1,

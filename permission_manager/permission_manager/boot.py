@@ -19,7 +19,7 @@ def boot_session(bootinfo):
     try:
         from permission_manager.permission_manager.workflow import _get_active_workflow_doctypes
 
-        bootinfo.pm_workflow_doctypes = sorted(_get_active_workflow_doctypes())
+        bootinfo.pm_workflow_doctypes = sorted(_get_active_workflow_doctypes() - _conditional_doctypes())
     except Exception:
         # a boot that fails takes the whole desk with it — never worth that
         bootinfo.pm_workflow_doctypes = []
@@ -30,6 +30,28 @@ def boot_session(bootinfo):
     except Exception:
         bootinfo.pm_backdate = {}
         frappe.log_error(title="Permission Manager: could not boot backdate allowances")
+
+
+def _conditional_doctypes() -> set:
+    """Doctypes a workflow governs only *some* documents of, so they stay off the boot list.
+
+    The boot list exists to take core's Submit button away before the toolbar is painted, on
+    the strength of the doctype alone. That is right for a doctype routed as a whole and wrong
+    for one routed in part: while sales return approval is on, a Sales Invoice workflow governs
+    returns above the threshold only, and naming Sales Invoice here would blank the Submit
+    button on every ordinary sale until get_workflow_info answered a round trip later.
+
+    get_workflow_info remains the authority; these doctypes simply wait for it.
+    """
+    try:
+        from permission_manager.permission_manager.api.sales_return_approval import (
+            RETURN_DOCTYPE,
+            is_enabled,
+        )
+
+        return {RETURN_DOCTYPE} if is_enabled() else set()
+    except Exception:
+        return set()
 
 
 def _backdate_allowances() -> dict:
