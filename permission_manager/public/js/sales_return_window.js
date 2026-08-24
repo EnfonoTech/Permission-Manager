@@ -59,6 +59,18 @@ function pm_apply_return_window(frm, state) {
 			__("Return window closed — {0} days old, limit {1}", [state.age, state.days]),
 			"red"
 		);
+		// The same banner the override case gets, so the reason is on the form either way rather
+		// than only in the refusal that arrives after a click. Permanent: it is a standing fact
+		// about this invoice, not a passing notice.
+		frm.dashboard.add_comment(
+			__("A return against this invoice would be {0} day(s) past the {1} day window, counted from {2}. Ask someone authorised to override the sales return window.", [
+				state.age - state.days,
+				state.days,
+				basis,
+			]),
+			"red",
+			true
+		);
 		return;
 	}
 
@@ -72,7 +84,7 @@ function pm_apply_return_window(frm, state) {
 			state.days,
 			basis,
 		]),
-		"orange",
+		"yellow",
 		true
 	);
 }
