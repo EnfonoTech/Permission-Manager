@@ -1065,11 +1065,26 @@ def validate_submit_state(doc, method=None):
         return
 
     state_name = doc.get(workflow.workflow_state_field)
+    if not state_name and doc.get("name"):
+        # The engine persists the initial state from on_update (pm_workflow_action.
+        # process_workflow_actions), writing it straight to the row. A document created and
+        # submitted inside one request has therefore already been stamped in the database while
+        # the object in hand still carries nothing - and reading the object alone let such a
+        # submit walk past the whole chain.
+        state_name = frappe.db.get_value(doc.doctype, doc.name, workflow.workflow_state_field)
+
     if not state_name:
+        # No state at all. For a document whose approval is optional this is nothing to refuse
+        # over. For one the settings have made mandatory it is the opposite: unapproved is
+        # exactly what it looks like.
+        if guarded_return:
+            _refuse_unapproved(doc, workflow, state_name)
         return
 
     state = next((s for s in workflow.states if s.state == state_name), None)
     if not state:
+        if guarded_return:
+            _refuse_unapproved(doc, workflow, state_name)
         return
 
     if cint(state.doc_status) == 1:
@@ -1088,6 +1103,20 @@ def validate_submit_state(doc, method=None):
             "name": frappe.bold(doc.name),
             "state": frappe.bold(state_name),
             "actions": frappe.bold(", ".join(actions) or _("the workflow action")),
+        },
+        title=_("Approval Required"),
+    )
+
+
+def _refuse_unapproved(doc, workflow, state_name):
+    """Refuse a document that must be approved but carries no submitting state."""
+    frappe.throw(
+        _("%(doctype)s %(name)s needs approval before it can be submitted. Use the %(workflow)s "
+          "actions on the form.")
+        % {
+            "doctype": _(doc.doctype),
+            "name": frappe.bold(doc.name),
+            "workflow": frappe.bold(workflow.name),
         },
         title=_("Approval Required"),
     )
