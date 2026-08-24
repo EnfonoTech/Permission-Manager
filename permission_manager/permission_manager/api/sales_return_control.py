@@ -106,12 +106,22 @@ def validate_return_window(doc, method=None):
         return
     if not is_enabled():
         return
-    if may_override():
-        return
 
     days = allowed_days()
     age = age_in_days(doc)
     if age is None or age <= days:
+        return
+
+    # Somebody allowed to override is still told the rule fired. Silence here is why the control
+    # looks broken to whoever is testing it as Administrator: the window had passed, the return
+    # was theirs to raise, and nothing on screen said either thing.
+    if may_override():
+        frappe.msgprint(
+            _("This return is {0} day(s) old and the window is {1} day(s). Allowed because you may "
+              "override the sales return window.").format(age, days),
+            title=_("Return Window Overridden"),
+            indicator="orange",
+        )
         return
 
     basis = (
@@ -127,6 +137,36 @@ def validate_return_window(doc, method=None):
         + _("Ask someone authorised to override the sales return window."),
         title=_("Return Window Has Passed"),
     )
+
+
+@frappe.whitelist()
+def check_source_return_window(doctype: str, docname: str) -> dict:
+    """Would a return raised today against this document be refused?
+
+    Asked by the form of the *invoice*, not of the return, so the Return / Credit Note action can
+    be taken away before somebody fills a whole credit note in and only then gets refused.
+    """
+    frappe.has_permission(doctype, "read", doc=docname, throw=True)
+
+    if not is_enabled():
+        return {"enabled": False, "blocked": False}
+
+    probe = frappe._dict(
+        doctype=doctype, docstatus=0, is_return=1, return_against=docname, posting_date=nowdate()
+    )
+    age = age_in_days(probe)
+    days = allowed_days()
+    can_override = may_override()
+
+    return {
+        "enabled": True,
+        "days": days,
+        "age": age,
+        "can_override": can_override,
+        "past_window": bool(age is not None and age > days),
+        "blocked": bool(age is not None and age > days and not can_override),
+        "basis": counted_from(),
+    }
 
 
 @frappe.whitelist()
