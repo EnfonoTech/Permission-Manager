@@ -45,20 +45,51 @@ def clear_workflow_doctype_cache():
     frappe.cache().delete_value(_CACHE_KEY)
 
 
+# ─── Applicability, decided by whoever owns the policy ────────────────────────
+# A PM Workflow is defined per doctype, but a doctype is not always routed as a whole: one client
+# routes Sales Invoice *returns above a threshold* and nothing else. That rule is theirs, not this
+# app's -- this app is installed on every PM site -- so it is asked for rather than known.
+#
+# An app answers by naming a function in its hooks.py:
+#
+#     pm_workflow_applicability = ["their_app.their_module.their_resolver"]
+#
+# resolver(doctype, doc) -> None | dict, where None means "no opinion" and the dict may carry:
+#     applies          whether a workflow governs THIS document (doc is not None)
+#     conditional      this doctype is routed only in part -- keep it off the boot-time list
+#     guard_submit     treat it as submit-guarded even if it is not in SUBMIT_GUARD_DOCTYPES
+#     require_workflow refuse the submit when no workflow covers it, rather than letting it pass
+#     message          what to say when refusing for a missing workflow
+APPLICABILITY_HOOK = "pm_workflow_applicability"
+
+
+def applicability_verdicts(doctype: str, doc=None) -> list:
+    """Every registered opinion about this doctype / document.
+
+    A resolver that raises is skipped, not fatal: a broken answer must never unroute an approval
+    chain, which is worse than routing one document too many.
+    """
+    verdicts = []
+    for method in frappe.get_hooks(APPLICABILITY_HOOK) or []:
+        try:
+            verdict = frappe.get_attr(method)(doctype, doc)
+        except Exception:
+            frappe.log_error(title=f"Permission Manager: {method} failed")
+            continue
+        if verdict:
+            verdicts.append(verdict)
+    return verdicts
+
+
 def workflow_applies(doctype: str, doc=None) -> bool:
     """Whether a PM Workflow on this doctype governs this document.
 
-    Everything is routed unless a feature says otherwise, so a failure here must never take a
-    document down with it: a broken answer would silently unroute an approval chain, which is
-    worse than routing one document too many.
+    Routed unless a resolver says otherwise, so a site with no resolver behaves exactly as before.
     """
-    try:
-        from permission_manager.permission_manager.api.sales_return_approval import workflow_applies as _applies
-
-        return _applies(doctype, doc)
-    except Exception:
-        frappe.log_error(title="Permission Manager: workflow applicability check failed")
-        return True
+    for verdict in applicability_verdicts(doctype, doc):
+        if "applies" in verdict and not verdict["applies"]:
+            return False
+    return True
 
 
 # ─── State / field helpers ────────────────────────────────────────────────────
@@ -126,11 +157,11 @@ def get_workflow_name(doctype: str, docname: str | int = None, doc=None) -> str 
     cost_center = getattr(doc, "cost_center", None)
     user = getattr(doc, "owner", None) or frappe.session.user
 
-    # A workflow is defined per doctype, but a doctype is not always routed as a whole: a
-    # Sales Invoice workflow is meant for returns above a threshold, not for every sale. The
-    # gate answers for the document in hand, and answering None here settles the entire
-    # surface at once -- the form restores its native Submit and the submit guard has no state
-    # to refuse. See api/sales_return_approval.py.
+    # A workflow is defined per doctype, but a doctype is not always routed as a whole -- a
+    # client may route Sales Invoice returns above a threshold and nothing else. Whoever owns
+    # that policy answers through the pm_workflow_applicability hook; answering None here
+    # settles the entire surface at once -- the form restores its native Submit and the submit
+    # guard has no state to refuse.
     if not workflow_applies(doctype, doc):
         return None
 
@@ -1001,36 +1032,24 @@ def is_transition_condition_satisfied(transition, doc) -> bool:
 SUBMIT_GUARD_DOCTYPES = ("Journal Entry",)
 
 
-def _is_guarded_sales_return(doc) -> bool:
-    """Whether this document is a sales return the approval setting has taken charge of.
-
-    Answered without a single import or query for every other doctype: this runs on the
-    before_submit of everything on the site.
-    """
-    if doc.doctype != "Sales Invoice" or not cint(doc.get("is_return")):
-        return False
-
-    try:
-        from permission_manager.permission_manager.api.sales_return_approval import needs_approval
-
-        return needs_approval(doc)
-    except Exception:
-        frappe.log_error(title="Permission Manager: sales return approval check failed")
-        return False
-
-
-def _must_have_workflow(doc) -> bool:
-    try:
-        from permission_manager.permission_manager.api.sales_return_approval import must_have_workflow
-
-        return must_have_workflow(doc)
-    except Exception:
-        return False
+def _guard_verdict(doc) -> dict:
+    """The strongest opinion any resolver holds about submitting this document."""
+    guard = {}
+    for verdict in applicability_verdicts(doc.doctype, doc):
+        if verdict.get("guard_submit"):
+            guard["guard_submit"] = True
+            guard["require_workflow"] = guard.get("require_workflow") or bool(
+                verdict.get("require_workflow")
+            )
+            if verdict.get("message"):
+                guard["message"] = verdict["message"]
+    return guard
 
 
 def validate_submit_state(doc, method=None):
     """Refuse a submit from a workflow state that is not a submitting state."""
-    guarded_return = _is_guarded_sales_return(doc)
+    guard = _guard_verdict(doc)
+    guarded_return = bool(guard.get("guard_submit"))
     if doc.doctype not in SUBMIT_GUARD_DOCTYPES and not guarded_return:
         return
 
@@ -1050,13 +1069,14 @@ def validate_submit_state(doc, method=None):
         # A return that needs approval and has no workflow to approve it is refused rather
         # than let through: the setting says the approval is mandatory, and an unapproved
         # credit note is exactly what it exists to prevent.
-        if guarded_return and _must_have_workflow(doc):
-            from permission_manager.permission_manager.api.sales_return_approval import (
-                no_workflow_message,
-            )
-
+        if guarded_return and guard.get("require_workflow"):
             frappe.throw(
-                no_workflow_message(doc)
+                (
+                    guard.get("message")
+                    or _("{0} {1} needs approval, but no active PM Workflow covers it.").format(
+                        _(doc.doctype), frappe.bold(doc.name)
+                    )
+                )
                 + "<br><br>"
                 + _("Ask a System Manager to configure the approval workflow for it."),
                 title=_("Approval Required"),

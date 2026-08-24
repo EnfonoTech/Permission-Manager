@@ -37,19 +37,25 @@ def _conditional_doctypes() -> set:
 
     The boot list exists to take core's Submit button away before the toolbar is painted, on
     the strength of the doctype alone. That is right for a doctype routed as a whole and wrong
-    for one routed in part: while sales return approval is on, a Sales Invoice workflow governs
-    returns above the threshold only, and naming Sales Invoice here would blank the Submit
-    button on every ordinary sale until get_workflow_info answered a round trip later.
+    for one routed in part -- a workflow meant for returns above a threshold, say: naming its
+    doctype here would blank the Submit button on every ordinary document of that type until
+    get_workflow_info answered a round trip later. A resolver says so by returning
+    `conditional` (see workflow.APPLICABILITY_HOOK).
 
     get_workflow_info remains the authority; these doctypes simply wait for it.
     """
     try:
-        from permission_manager.permission_manager.api.sales_return_approval import (
-            RETURN_DOCTYPE,
-            is_enabled,
+        from permission_manager.permission_manager.workflow import (
+            _get_active_workflow_doctypes,
+            applicability_verdicts,
         )
 
-        return {RETURN_DOCTYPE} if is_enabled() else set()
+        conditional = set()
+        for doctype in _get_active_workflow_doctypes():
+            for verdict in applicability_verdicts(doctype):
+                if verdict.get("conditional"):
+                    conditional.add(doctype)
+        return conditional
     except Exception:
         return set()
 

@@ -52,9 +52,6 @@ doctype_js = {
     # parked in a PM Workflow state leaves the request reading Pending / 0% and invites a
     # duplicate. This warns on the request itself.
     "Material Request":  "public/js/material_request_transfer_warning.js",
-    # takes Return / Credit Note off the Create menu once the return window has closed, and says
-    # so on the form; the refusal itself is server-side, in api/sales_return_control.py
-    "Sales Invoice":     "public/js/sales_return_window.js",
     # warns as soon as a supplier is chosen that they already hold an unbilled advance;
     # the refusal itself is server-side, in api/po_advance_block.py
     "Purchase Order":    "public/js/po_advance_block.js",
@@ -95,16 +92,6 @@ fixtures = [
     },
 ]
 
-# ─── Overridden endpoints ─────────────────────────────────────────────────────
-# The return window is enforced on save and the invoice form hides the action once the window has
-# closed — but a form script only helps once the browser has it, and Frappe re-paints the Create
-# menu on every render. Standing in for erpnext's endpoint puts the same answer at the one point
-# that cannot be stale: the request that builds the credit note.
-override_whitelisted_methods = {
-    "erpnext.accounts.doctype.sales_invoice.sales_invoice.make_sales_return":
-        "permission_manager.permission_manager.api.sales_return_control.make_sales_return",
-}
-
 # ─── Permission query conditions ──────────────────────────────────────────────
 permission_query_conditions = {
     "Leave Application": "permission_manager.permission_manager.ladder_approve.leave_application.api.leave_application_permission_query",
@@ -135,12 +122,6 @@ doc_events = {
     "Expense Claim": {
         "before_save":   "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_submit",
-    },
-    # A sales return may only be raised inside the window PM Settings allows. validate, not
-    # before_submit: the requirement is that a late return cannot be SAVED, so it cannot be
-    # parked in drafts either. Off unless PM Settings enables it.
-    "Sales Invoice": {
-        "validate": "permission_manager.permission_manager.api.sales_return_control.validate_return_window",
     },
     # Account-driven approval routing: stamp custom_approval_group from the line's
     # expense account (tag accounts, not numbers). Read by PM Workflow conditions.

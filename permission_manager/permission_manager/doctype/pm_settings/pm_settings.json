@@ -17,17 +17,7 @@
   "backdate_doctypes",
   "default_backdate_days",
   "allow_amendment_on_original_date",
-  "backdate_rules",
-  "sales_return_section",
-  "restrict_sales_return",
-  "sales_return_days",
-  "sales_return_days_from",
-  "sales_return_overrides",
-  "si_return_approval_section",
-  "si_return_approval_enabled",
-  "si_return_amount_restriction",
-  "si_return_approval_threshold",
-  "si_return_requires_workflow"
+  "backdate_rules"
  ],
  "fields": [
   {
@@ -125,84 +115,11 @@
    "fieldtype": "Table MultiSelect",
    "label": "Applies To These Documents",
    "options": "PM Backdate Doctype"
-  },
-  {
-   "fieldname": "sales_return_section",
-   "fieldtype": "Section Break",
-   "label": "Sales Return Control"
-  },
-  {
-   "default": "0",
-   "description": "Refuse a Sales Return raised outside the window below. Off, and nothing changes.",
-   "fieldname": "restrict_sales_return",
-   "fieldtype": "Check",
-   "label": "Restrict Creating Sales Returns"
-  },
-  {
-   "default": "0",
-   "depends_on": "restrict_sales_return",
-   "description": "How many days a return may still be raised within. 0 allows the same day only.",
-   "fieldname": "sales_return_days",
-   "fieldtype": "Int",
-   "label": "Days Allowed for a Return"
-  },
-  {
-   "default": "Original Invoice Date",
-   "depends_on": "restrict_sales_return",
-   "description": "Counted from the invoice being returned (the usual retail rule), or from today back to the return's own posting date.",
-   "fieldname": "sales_return_days_from",
-   "fieldtype": "Select",
-   "label": "Count the Days From",
-   "options": "Original Invoice Date\nReturn Posting Date"
-  },
-  {
-   "depends_on": "restrict_sales_return",
-   "description": "Roles or users who may raise a return past the window anyway.",
-   "fieldname": "sales_return_overrides",
-   "fieldtype": "Table",
-   "label": "Allowed to Override",
-   "options": "PM Advance Block Override"
-  },
-  {
-   "fieldname": "si_return_approval_section",
-   "fieldtype": "Section Break",
-   "label": "Sales Return Approval"
-  },
-  {
-   "default": "0",
-   "description": "Send Sales Invoice returns through the PM Workflow for this doctype instead of letting them be submitted directly. While this is on, a PM Workflow on Sales Invoice governs returns only — ordinary invoices keep their own Submit button.",
-   "fieldname": "si_return_approval_enabled",
-   "fieldtype": "Check",
-   "label": "Sales Return Approval Enabled"
-  },
-  {
-   "default": "1",
-   "depends_on": "si_return_approval_enabled",
-   "description": "Only returns above the threshold need approval. Off, and every return does.",
-   "fieldname": "si_return_amount_restriction",
-   "fieldtype": "Check",
-   "label": "Restrict by Return Amount"
-  },
-  {
-   "default": "500",
-   "depends_on": "eval:doc.si_return_approval_enabled && doc.si_return_amount_restriction",
-   "description": "In company currency. A return of this amount or less is submitted directly; above it, approval is required.",
-   "fieldname": "si_return_approval_threshold",
-   "fieldtype": "Currency",
-   "label": "Approval Threshold"
-  },
-  {
-   "default": "1",
-   "depends_on": "si_return_approval_enabled",
-   "description": "Refuse a return that needs approval when no active PM Workflow covers Sales Invoice, instead of letting it through unapproved. Untick only while a workflow is being set up.",
-   "fieldname": "si_return_requires_workflow",
-   "fieldtype": "Check",
-   "label": "PM Workflow Approval Mandatory Above the Threshold"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-24 10:00:00.000000",
+ "modified": "2026-08-24 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Permission Manager",
  "name": "PM Settings",
