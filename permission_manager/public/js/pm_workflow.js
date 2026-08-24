@@ -61,13 +61,22 @@ function _pm_is_current(frm, ticket) {
 	return !!ticket && ticket.seq === frm.__pm_seq && ticket.docname === frm.doc.name;
 }
 
+// The approver banner is taken down by a selector that does not depend on the form: it is inserted
+// after the page head, which is not always inside the wrapper the form thinks it owns, and a
+// removal scoped to that wrapper can silently match nothing. A banner that survives one document
+// reads as an approval pending on the next one — reported on a paid invoice carrying "Pending
+// approval from: Accounts Manager", which belonged to a credit note two documents earlier.
+function _pm_clear_approver_banner() {
+	$(".pm-approver-info").remove();
+}
+
 // Everything this file puts on the form, taken back off in one place. Anything added above has
 // to be removed here too, or it survives into the next document.
 function _pm_teardown(frm) {
 	frm.__pm_has_workflow = false;
 	frm._pm_transitions = [];
 	frm.page.clear_actions_menu();
-	frm.$wrapper.find(".pm-approver-info").remove();
+	_pm_clear_approver_banner();
 	frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
 	frm.remove_custom_button(__("Reassign Approver"));
 }
@@ -87,6 +96,13 @@ function _pm_restore_native(frm) {
 $(document).on("form-refresh", function (event, frm) {
 	if (!frm || !frm.doctype) return;
 	if (frm.doc.__islocal) return;
+
+	// The banner is the one thing that must never outlive a render: it names an approver, and a
+	// stale one is a false statement about the document on screen. Buttons can wait for the fresh
+	// answer (that is what stops them blinking on every save); this cannot.
+	if (frm.__pm_last_docname !== frm.doc.name) {
+		_pm_clear_approver_banner();
+	}
 
 	// A different document on the same reused form object: strip the previous one's buttons
 	// before anything is fetched. On a refresh of the SAME document the existing items are left
@@ -226,7 +242,7 @@ function _load_pending_approver_info(frm, ticket) {
 	// than returning early — it is the reason an approved invoice still read
 	// "Pending approval from: Purchase User" until the page was reloaded.
 	if (frm.doc.docstatus !== 0) {
-		frm.$wrapper.find(".pm-approver-info").remove();
+		_pm_clear_approver_banner();
 		frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
 		return;
 	}
@@ -239,7 +255,7 @@ function _load_pending_approver_info(frm, ticket) {
 
 			const action = r.message;
 			if (!action) {
-				frm.$wrapper.find(".pm-approver-info").remove();
+				_pm_clear_approver_banner();
 				frm.remove_custom_button(__("Reassign Approver"), __("Workflow"));
 				return;
 			}
@@ -252,9 +268,13 @@ function _load_pending_approver_info(frm, ticket) {
 			const display_name = pending_roles.length ? pending_roles.join(", ") : assigned_name;
 
 			if (display_name) {
-				if (!frm.$wrapper.find(".pm-approver-info").length) {
+				// re-stamped with the document it describes: a banner left behind by another
+				// document is replaced rather than relabelled
+				const $existing = $(`.pm-approver-info[data-pm-doc="${frappe.utils.escape_html(frm.doc.name)}"]`);
+				if (!$existing.length) {
+					_pm_clear_approver_banner();
 					const $info = $(`
-						<div class="pm-approver-info">
+						<div class="pm-approver-info" data-pm-doc="${frappe.utils.escape_html(frm.doc.name)}">
 							${frappe.utils.icon("users", "xs")}
 							<span>${__("Pending approval from:")}</span>
 							<strong class="pm-approver-name">${frappe.utils.escape_html(display_name)}</strong>
@@ -262,7 +282,7 @@ function _load_pending_approver_info(frm, ticket) {
 					`);
 					frm.$wrapper.find(".page-head").after($info);
 				} else {
-					frm.$wrapper.find(".pm-approver-name").text(display_name);
+					$existing.find(".pm-approver-name").text(display_name);
 				}
 			}
 
