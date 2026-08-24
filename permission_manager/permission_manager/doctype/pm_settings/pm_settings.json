@@ -17,7 +17,12 @@
   "backdate_doctypes",
   "default_backdate_days",
   "allow_amendment_on_original_date",
-  "backdate_rules"
+  "backdate_rules",
+  "sales_return_section",
+  "restrict_sales_return",
+  "sales_return_days",
+  "sales_return_days_from",
+  "sales_return_overrides"
  ],
  "fields": [
   {
@@ -115,11 +120,48 @@
    "fieldtype": "Table MultiSelect",
    "label": "Applies To These Documents",
    "options": "PM Backdate Doctype"
+  },
+  {
+   "fieldname": "sales_return_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Return Control"
+  },
+  {
+   "default": "0",
+   "description": "Refuse a Sales Return raised outside the window below. Off, and nothing changes.",
+   "fieldname": "restrict_sales_return",
+   "fieldtype": "Check",
+   "label": "Restrict Creating Sales Returns"
+  },
+  {
+   "default": "0",
+   "depends_on": "restrict_sales_return",
+   "description": "How many days a return may still be raised within. 0 allows the same day only.",
+   "fieldname": "sales_return_days",
+   "fieldtype": "Int",
+   "label": "Days Allowed for a Return"
+  },
+  {
+   "default": "Original Invoice Date",
+   "depends_on": "restrict_sales_return",
+   "description": "Counted from the invoice being returned (the usual retail rule), or from today back to the return's own posting date.",
+   "fieldname": "sales_return_days_from",
+   "fieldtype": "Select",
+   "label": "Count the Days From",
+   "options": "Original Invoice Date\nReturn Posting Date"
+  },
+  {
+   "depends_on": "restrict_sales_return",
+   "description": "Roles or users who may raise a return past the window anyway.",
+   "fieldname": "sales_return_overrides",
+   "fieldtype": "Table",
+   "label": "Allowed to Override",
+   "options": "PM Advance Block Override"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-13 06:00:00.000000",
+ "modified": "2026-08-24 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Permission Manager",
  "name": "PM Settings",

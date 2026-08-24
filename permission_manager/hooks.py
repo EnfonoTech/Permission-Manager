@@ -123,6 +123,12 @@ doc_events = {
         "before_save":   "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.expense_claim.api.before_submit",
     },
+    # A sales return may only be raised inside the window PM Settings allows. validate, not
+    # before_submit: the requirement is that a late return cannot be SAVED, so it cannot be
+    # parked in drafts either. Off unless PM Settings enables it.
+    "Sales Invoice": {
+        "validate": "permission_manager.permission_manager.api.sales_return_control.validate_return_window",
+    },
     # Account-driven approval routing: stamp custom_approval_group from the line's
     # expense account (tag accounts, not numbers). Read by PM Workflow conditions.
     "Purchase Invoice": {
