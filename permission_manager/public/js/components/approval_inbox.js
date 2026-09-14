@@ -204,10 +204,19 @@ export class ApprovalInbox {
             .text(d.total || "").toggle(!!d.total);
 
         // Populate doctype filter
-        const $dt_sel  = this.wrapper.find(".ps-ai-dt-filter");
-        const doctypes = [...new Set(d.groups.flatMap((g) => g.items.map((i) => i.doctype)))].sort();
+        // One option per transaction as a human reads it, so a credit note is offered as
+        // "Sales Return" and picking it leaves the sales behind. The value carries the doctype
+        // with it — "Sales Return" alone could not tell the server which table to look in.
+        const $dt_sel = this.wrapper.find(".ps-ai-dt-filter");
+        const options = new Map();
+        d.groups.flatMap((g) => g.items).forEach((i) => {
+            options.set(i.transaction_filter || i.doctype, i.transaction || i.doctype);
+        });
         $dt_sel.html(`<option value="">${__("All Transactions")}</option>`);
-        doctypes.forEach((dt) => $dt_sel.append(`<option value="${esc(dt)}">${esc(dt)}</option>`));
+        [...options.entries()]
+            .sort((a, b) => a[1].localeCompare(b[1]))
+            .forEach(([value, label]) =>
+                $dt_sel.append(`<option value="${esc(value)}">${esc(label)}</option>`));
 
         this._render_stats_bar();
 
@@ -365,8 +374,12 @@ export class ApprovalInbox {
                          : "ps-ai-days-ok";
         const row_class  = item.days > 30 ? "ps-ai-row ps-ai-row-overdue" : "ps-ai-row";
 
-        const search_val = [item.doctype, item.docname, item.creator, item.role_id, item.state]
-            .join(" ").toLowerCase();
+        // `transaction` is what the row is headed — "Sales Return" where the document is a
+        // credit note. The doctype is searched too, so a person who types "sales invoice"
+        // still finds the return that is one.
+        const search_val = [item.transaction, item.doctype, item.docname, item.creator,
+                            item.role_id, item.state]
+            .filter(Boolean).join(" ").toLowerCase();
 
         let act_html = "";
         // An ad-hoc approver who was forwarded to with "return to me" gives input only — the
@@ -416,6 +429,7 @@ export class ApprovalInbox {
             <tr class="${row_class}"
                 data-name="${esc(item.name)}"
                 data-doctype="${esc(item.doctype)}"
+                data-transaction="${esc(item.transaction_filter || item.doctype)}"
                 data-docname="${esc(item.docname)}"
                 data-search="${esc(search_val)}"
                 data-creation="${esc(item.creation_iso || '')}">
@@ -429,7 +443,7 @@ export class ApprovalInbox {
                 <td class="ps-ai-col-pri">
                     <span class="ps-ai-pri-badge ${pri_class}">${esc(item.priority)}</span>
                 </td>
-                <td class="ps-ai-col-trans" title="${esc(item.doctype)}">${esc(item.doctype)}</td>
+                <td class="ps-ai-col-trans" title="${esc(item.doctype)}">${esc(item.transaction || item.doctype)}</td>
                 <td class="ps-ai-col-num">
                     <a class="ps-ai-doc-link" href="${esc(item.doc_url)}" target="_blank">
                         ${esc(item.docname)}
@@ -900,7 +914,9 @@ export class ApprovalInbox {
         this.wrapper.find(".ps-ai-row").each((_, row) => {
             const $row = $(row);
             const s    = ($row.attr("data-search") || "").toLowerCase();
-            const rdt  = $row.attr("data-doctype") || "";
+            // the filter matches the transaction as labelled, not the table it lives in:
+            // picking Sales Return must not bring the sales along
+            const rdt  = $row.attr("data-transaction") || $row.attr("data-doctype") || "";
             const ciso = $row.attr("data-creation") || "";
             const in_date = (!from || ciso >= from) && (!to || ciso <= to);
             const show = (!q || s.includes(q)) && (!dt || rdt === dt) && in_date;
@@ -939,7 +955,8 @@ export class ApprovalInbox {
                 { limit: 500, all_users: all_users ? 1 : 0 },
                 this._from_date ? { from_date: this._from_date } : {},
                 this._to_date ? { to_date: this._to_date } : {},
-                this._filter_doctype ? { reference_doctype: this._filter_doctype } : {}
+                // the dropdown's value, which carries the return reading with the doctype
+                this._filter_doctype ? { transaction: this._filter_doctype } : {}
             ),
             callback: (r) => {
                 // Kept so the search and transaction filters can repaint without refetching.
@@ -970,16 +987,22 @@ export class ApprovalInbox {
         // which would drop whatever Pending put there.
         const $dt = this.wrapper.find(".ps-ai-dt-filter");
         const known = new Set($dt.find("option").map((i, o) => $(o).val()).get());
-        [...new Set(loaded.map((r) => r.doctype))].sort().forEach((d) => {
-            if (d && !known.has(d)) $dt.append(`<option value="${esc(d)}">${esc(d)}</option>`);
+        const extra = new Map();
+        loaded.forEach((r) => {
+            const value = r.transaction_filter || r.doctype;
+            if (value && !known.has(value)) extra.set(value, r.transaction || r.doctype);
         });
+        [...extra.entries()]
+            .sort((a, b) => a[1].localeCompare(b[1]))
+            .forEach(([value, label]) =>
+                $dt.append(`<option value="${esc(value)}">${esc(label)}</option>`));
 
         const term = (this._search || "").trim().toLowerCase();
         const dt = this._filter_doctype || "";
         const rows = loaded.filter((row) => {
-            if (dt && row.doctype !== dt) return false;
+            if (dt && (row.transaction_filter || row.doctype) !== dt) return false;
             if (!term) return true;
-            return [row.doctype, row.docname, row.completed_by, row.submitted_by,
+            return [row.transaction, row.doctype, row.docname, row.completed_by, row.submitted_by,
                     row.action_state, row.current_state, row.role]
                 .filter(Boolean).join(" ").toLowerCase().includes(term);
         });
@@ -1043,7 +1066,7 @@ export class ApprovalInbox {
                                 <td class="ps-ai-hist-trigger" title="${__("Click for the full route and every approval on it")}" style="cursor:pointer">
                                     ${esc(row.date)} <span class="ps-ai-expand-icon">▸</span>
                                 </td>
-                                <td>${esc(row.doctype)}</td>
+                                <td title="${esc(row.doctype)}">${esc(row.transaction || row.doctype)}</td>
                                 <td>
                                     <a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a>
                                     ${row.event_count > 1
@@ -1169,7 +1192,7 @@ export class ApprovalInbox {
                             <tbody>
                             ${longest_pending.map((a) => `
                                 <tr>
-                                    <td>${esc(a.doctype)}</td>
+                                    <td title="${esc(a.doctype)}">${esc(a.transaction || a.doctype)}</td>
                                     <td><a href="${esc(a.doc_url)}" target="_blank">${esc(a.docname)}</a></td>
                                     <td><span class="ps-ai-state-badge">${esc(a.state)}</span></td>
                                     <td><span class="ps-ai-days-badge ${a.days > 30 ? "ps-ai-days-critical" : "ps-ai-days-warn"}">${a.days}</span></td>

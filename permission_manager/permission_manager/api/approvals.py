@@ -49,6 +49,77 @@ def _safe_slug(doctype: str) -> str:
     return doctype.lower().replace(" ", "-")
 
 
+# ─── What the transaction is called ───────────────────────────────────────────
+# A credit note is a Sales Invoice carrying `is_return`, so an approver saw the row headed
+# "Sales Invoice" -- the same words as the sale it reverses, under a role literally called
+# Sales Return Manager. The label is decided here rather than in the browser so the inbox, the
+# History tab, the transaction filter and the analytics all say the same thing about the same
+# document.
+RETURN_LABELS = {
+    "Sales Invoice":          "Sales Return",
+    "POS Invoice":            "Sales Return",
+    "Delivery Note":          "Sales Return",
+    "Purchase Invoice":       "Purchase Return",
+    "Purchase Receipt":       "Purchase Return",
+    "Subcontracting Receipt": "Purchase Return",
+}
+
+# The filter value carries the doctype beside the flag: "Sales Return" on its own is ambiguous
+# (an invoice return and a delivery return are both called that) and the history query needs a
+# doctype it can hand to a filter. A bare doctype still means "all of them", so a caller that
+# knows nothing of this keeps working.
+_FILTER_SEP = "::"
+
+
+def _returns_among(pairs) -> set:
+    """Which of these (doctype, docname) documents are returns. One query per doctype."""
+    wanted: dict = {}
+    for doctype, docname in pairs:
+        if doctype in RETURN_LABELS and docname:
+            wanted.setdefault(doctype, set()).add(docname)
+
+    found = set()
+    for doctype, docnames in wanted.items():
+        try:
+            for row in frappe.get_all(
+                doctype,
+                filters={"name": ["in", list(docnames)], "is_return": 1},
+                fields=["name"],
+            ):
+                found.add((doctype, row.name))
+        except Exception:
+            # a doctype whose app has since been removed, or one that never had the field:
+            # it simply has no returns, and must not take the whole inbox down
+            continue
+    return found
+
+
+def transaction_label(doctype: str, is_return: bool) -> str:
+    """What to call this document in a list a human reads."""
+    if is_return and doctype in RETURN_LABELS:
+        return _(RETURN_LABELS[doctype])
+    return _(doctype)
+
+
+def transaction_filter_value(doctype: str, is_return: bool) -> str:
+    """The value behind the label in the transaction dropdown.
+
+    Marked only for the doctypes that have two readings. Everything else stays a bare doctype,
+    which is what it has always been.
+    """
+    if doctype in RETURN_LABELS:
+        return f"{doctype}{_FILTER_SEP}{1 if is_return else 0}"
+    return doctype
+
+
+def split_transaction_filter(value: str):
+    """A filter value back into (doctype, is_return) -- is_return None meaning "either"."""
+    if _blank(value):
+        return None, None
+    doctype, _sep, marker = cstr(value).partition(_FILTER_SEP)
+    return doctype, (1 if marker == "1" else 0 if marker == "0" else None)
+
+
 def _only_pending_docs(actions: list) -> list:
     """Keep only actions whose reference document is still a draft (docstatus 0).
 
@@ -298,6 +369,8 @@ def get_my_pending_approvals() -> dict:
     # ── Step 5: enrich every action ────────────────────────────────────────────
     today_dt = now_datetime()
     results  = []
+    # which of the referenced documents are returns, one query per doctype rather than per row
+    returns = _returns_among((a.reference_doctype, a.reference_name) for a in my_actions)
 
     for act in my_actions:
         doctype = act.reference_doctype
@@ -348,9 +421,15 @@ def get_my_pending_approvals() -> dict:
         # categorise on what the state can do, not on the emptied button list
         category        = _categorize(state, trans_info["actions"])
 
+        is_return = (doctype, docname) in returns
+
         results.append({
             "name":              act.name,
             "doctype":           doctype,
+            # what the row is headed, and the value the transaction filter matches on. The
+            # doctype above stays untouched: every action, preview and link is addressed by it.
+            "transaction":       transaction_label(doctype, is_return),
+            "transaction_filter": transaction_filter_value(doctype, is_return),
             "docname":           docname,
             "date":              frappe.utils.format_datetime(dated_on, "dd/MM/yy HH:mm"),
             "creation_iso":      str(dated_on)[:10],
@@ -422,7 +501,8 @@ _HISTORY_SCAN_ROWS = 5000
 @frappe.whitelist()
 def get_my_approval_history(limit: int = 200, all_users: int = 0,
                             from_date: str = None, to_date: str = None,
-                            reference_doctype: str = None) -> list:
+                            reference_doctype: str = None,
+                            transaction: str = None) -> list:
     """
     Return workflow action history visible to the current user:
     - Actions the current user personally completed (approver view)
@@ -451,8 +531,14 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
     window = _history_window(from_date, to_date)
 
     base = dict({"status": "Completed"}, **window)
+    # `transaction` is the dropdown's own value: a doctype, optionally marked as the return
+    # reading of it. It narrows the query by doctype here and the returns are sifted out below,
+    # before the document cap, so asking for Sales Returns cannot be crowded out by the sales.
+    picked_doctype, picked_is_return = split_transaction_filter(transaction)
     if not _blank(reference_doctype):
         base["reference_doctype"] = reference_doctype
+    elif picked_doctype:
+        base["reference_doctype"] = picked_doctype
 
     # Own view reads two scopes: what I approved, and what happened to what I submitted.
     scopes = [base] if all_users else [
@@ -474,6 +560,13 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
                 rows.append(row)
 
     rows.sort(key=lambda r: r.modified, reverse=True)
+
+    if picked_is_return is not None and rows:
+        returns = _returns_among((r.reference_doctype, r.reference_name) for r in rows)
+        rows = [
+            r for r in rows
+            if ((r.reference_doctype, r.reference_name) in returns) == bool(picked_is_return)
+        ]
 
     # Keep every event of the newest `limit` documents, so the per-document event count and the
     # row expansion still see the whole chain rather than a truncated tail of it.
@@ -587,11 +680,16 @@ def _shape_history(rows, all_users=False):
             # a doctype that has since been removed should not take the whole tab down
             continue
 
+    returns = _returns_among((r.reference_doctype, r.reference_name) for r in rows)
+
     out = []
     for r in rows:
+        is_return = (r.reference_doctype, r.reference_name) in returns
         row = {
             "name": r.name,
             "doctype": r.reference_doctype,
+            "transaction": transaction_label(r.reference_doctype, is_return),
+            "transaction_filter": transaction_filter_value(r.reference_doctype, is_return),
             "docname": r.reference_name,
             "action_state": r.workflow_state,
             "current_state": current.get((r.reference_doctype, r.reference_name), ""),
@@ -660,10 +758,14 @@ def get_approval_analytics() -> dict:
         limit=10,
     )
     longest_pending = []
+    pending_returns = _returns_among((a.reference_doctype, a.reference_name) for a in open_actions)
     for a in open_actions:
         days = int((today - a.creation).total_seconds() / 86400)
         longest_pending.append({
             "doctype":  a.reference_doctype,
+            "transaction": transaction_label(
+                a.reference_doctype, (a.reference_doctype, a.reference_name) in pending_returns
+            ),
             "docname":  a.reference_name,
             "state":    a.workflow_state,
             "days":     days,
