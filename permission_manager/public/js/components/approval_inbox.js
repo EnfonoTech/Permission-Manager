@@ -58,7 +58,8 @@ export class ApprovalInbox {
         this._from_date       = "";
         this._to_date         = "";
         this._date_sort       = "desc";      // "asc" | "desc"
-        this._active_tab      = "pending";   // "pending" | "history" | "analytics"
+        this._active_tab      = "pending";   // "pending" | "sent_back" | "history" | "analytics"
+        this._sent_back_rows  = [];
         this._build_shell();
         this.load();
     }
@@ -96,6 +97,8 @@ export class ApprovalInbox {
 
                 <div class="ps-ai-nav-tabs">
                     <button class="ps-ai-nav-tab active" data-tab="pending">${__("Pending")}</button>
+                    <button class="ps-ai-nav-tab" data-tab="sent_back">${__("Sent Back")}
+                        <span class="ps-ai-sentback-badge" style="display:none"></span></button>
                     <button class="ps-ai-nav-tab" data-tab="history">${__("History")}</button>
                     <button class="ps-ai-nav-tab" data-tab="analytics">${__("Analytics")}</button>
                 </div>
@@ -116,11 +119,13 @@ export class ApprovalInbox {
             if (this._active_tab === "pending") this._apply_filter();
             // History rows are already loaded, so filter what is on screen rather than refetch
             else if (this._active_tab === "history") this._paint_history();
+            else if (this._active_tab === "sent_back") this._paint_sent_back();
         });
 
         this.wrapper.find(".ps-ai-dt-filter").on("change", (e) => {
             this._filter_doctype = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
+            else if (this._active_tab === "sent_back") this._paint_sent_back();
             // Refetch rather than repaint: the server filters by transaction now, and the row cap
             // counts documents, so asking it for one type returns that type's whole history
             // instead of whatever survived a general cap. A dropdown changes rarely, unlike the
@@ -132,12 +137,14 @@ export class ApprovalInbox {
             this._from_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
             else if (this._active_tab === "history") this._render_history();
+            else if (this._active_tab === "sent_back") this._render_sent_back();
         });
 
         this.wrapper.find(".ps-ai-to-date").on("change", (e) => {
             this._to_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
             else if (this._active_tab === "history") this._render_history();
+            else if (this._active_tab === "sent_back") this._render_sent_back();
         });
 
         this.wrapper.find(".ps-ai-nav-tab").on("click", (e) => {
@@ -156,11 +163,13 @@ export class ApprovalInbox {
         // on Pending carried over with no visible control to explain it, and the tab could only
         // report "N of M match the filters" without showing the filters.
         const $search_row = this.wrapper.find(".ps-ai-search, .ps-ai-dt-filter, .ps-ai-date-range");
-        $search_row.toggle(tab === "pending" || tab === "history");
+        $search_row.toggle(tab === "pending" || tab === "history" || tab === "sent_back");
         this.wrapper.find(".ps-ai-stats-bar").toggle(tab === "pending");
 
         if (tab === "pending") {
             this._render();
+        } else if (tab === "sent_back") {
+            this._render_sent_back();
         } else if (tab === "history") {
             this._render_history();
         } else if (tab === "analytics") {
@@ -181,6 +190,7 @@ export class ApprovalInbox {
                 this.data = r.message || { groups: [], total: 0 };
                 _order_actions(this.data);   // Accept before Reject, everywhere
                 this._switch_tab(this._active_tab);
+                this._refresh_sent_back_badge();
             },
             error: () => {
                 $body.html(`
@@ -934,6 +944,139 @@ export class ApprovalInbox {
 
         const grand = this.wrapper.find(".ps-ai-row:visible").length;
         this.wrapper.find(".ps-ai-total-badge").text(grand || "").toggle(!!grand);
+    }
+
+    // ── Sent Back tab ─────────────────────────────────────────────────────────
+    // A document an approver rejected or returned for correction leaves every other view: its
+    // action is Completed so Pending drops it, and the document itself reverts to a draft that
+    // nothing lists. The person who has to fix it was the only one never shown where it went --
+    // on this site seventeen were outstanding, the oldest for 57 days.
+
+    _refresh_sent_back_badge() {
+        // fetched on load rather than on click, so somebody who never opens the tab still sees
+        // that something of theirs is waiting
+        frappe.call({
+            method: "permission_manager.permission_manager.api.approvals.get_sent_back_documents",
+            args: { all_users: 0 },
+            callback: (r) => {
+                this._sent_back_rows = r.message || [];
+                const count = this._sent_back_rows.length;
+                this.wrapper.find(".ps-ai-sentback-badge")
+                    .text(count || "").toggle(!!count);
+                if (this._active_tab === "sent_back") this._paint_sent_back();
+            },
+        });
+    }
+
+    _render_sent_back() {
+        const $body = this.wrapper.find(".ps-ai-body");
+        $body.html(`<div class="ps-loading">${__("Loading…")}</div>`);
+
+        const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
+        const all_users = is_sysmgr && !!this._sent_back_all_users;
+
+        frappe.call({
+            method: "permission_manager.permission_manager.api.approvals.get_sent_back_documents",
+            args: Object.assign(
+                { all_users: all_users ? 1 : 0 },
+                this._from_date ? { from_date: this._from_date } : {},
+                this._to_date ? { to_date: this._to_date } : {}
+            ),
+            callback: (r) => {
+                this._sent_back_rows = r.message || [];
+                this._sent_back_showed_all = all_users;
+                this._paint_sent_back();
+            },
+            error: (e) => {
+                console.error("Sent Back failed", e);
+                $body.html(`<div class="ps-ai-empty"><p>${__("Failed to load returned documents.")}</p></div>`);
+            },
+        });
+    }
+
+    _paint_sent_back() {
+        const $body = this.wrapper.find(".ps-ai-body");
+        const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
+        const loaded = this._sent_back_rows || [];
+
+        const term = (this._search || "").trim().toLowerCase();
+        const dt = this._filter_doctype || "";
+        const rows = loaded.filter((row) => {
+            if (dt && (row.transaction_filter || row.doctype) !== dt) return false;
+            if (!term) return true;
+            return [row.transaction, row.doctype, row.docname, row.state, row.sent_back_by,
+                    row.submitted_by, row.reason]
+                .filter(Boolean).join(" ").toLowerCase().includes(term);
+        });
+
+        const toggle = is_sysmgr
+            ? `<label class="ps-ai-allusers">
+                   <input type="checkbox" class="ps-ai-sentback-allusers-chk" ${
+                       this._sent_back_showed_all ? "checked" : ""} />
+                   ${__("All users")}
+               </label>`
+            : "";
+
+        if (!rows.length) {
+            $body.html(`
+                <div class="ps-ai-hist-bar">
+                    <span class="text-muted">${__("Documents an approver sent back to you")}</span>${toggle}
+                </div>
+                <div class="ps-ai-empty">
+                    ${frappe.utils.icon("tick-circle", "xl")}
+                    <h4>${__("Nothing to correct")}</h4>
+                    <p>${__("No document has been rejected or returned for correction.")}</p>
+                </div>`);
+            this._bind_sent_back_controls();
+            return;
+        }
+
+        const body = rows.map((row) => `
+            <tr>
+                <td>${esc(row.sent_back_on ? frappe.datetime.str_to_user(row.sent_back_on) : "")}</td>
+                <td><span class="ps-ai-days-badge ${
+                    row.days > 30 ? "ps-ai-days-critical" : row.days > 7 ? "ps-ai-days-warn" : "ps-ai-days-ok"
+                }">${row.days}</span></td>
+                <td title="${esc(row.doctype)}">${esc(row.transaction || row.doctype)}</td>
+                <td><a href="${esc(row.doc_url)}" target="_blank">${esc(row.docname)}</a></td>
+                <td><span class="ps-ai-state-badge">${esc(row.state)}</span></td>
+                <td>${esc(row.sent_back_by)}${row.role ? ` <span class="text-muted">(${esc(row.role)})</span>` : ""}</td>
+                <td>${esc(row.submitted_by)}</td>
+                <td class="ps-ai-sentback-reason">${esc(row.reason) || `<span class="text-muted">${__("no reason given")}</span>`}</td>
+                <td><a href="${esc(row.doc_url)}" target="_blank"
+                       class="btn btn-xs btn-default" title="${__("Open and correct")}">→</a></td>
+            </tr>`).join("");
+
+        $body.html(`
+            <div class="ps-ai-hist-bar">
+                <span class="text-muted">${
+                    __("{0} document(s) waiting to be corrected — oldest first", [rows.length])
+                }</span>${toggle}
+            </div>
+            <div class="ps-ai-table-wrap">
+            <table class="ps-matrix-table ps-ai-table">
+                <thead><tr>
+                    <th>${__("Sent Back On")}</th>
+                    <th>${__("Days")}</th>
+                    <th>${__("Transaction")}</th>
+                    <th>${__("#")}</th>
+                    <th>${__("State")}</th>
+                    <th>${__("Sent Back By")}</th>
+                    <th>${__("Raised By")}</th>
+                    <th>${__("Reason")}</th>
+                    <th></th>
+                </tr></thead>
+                <tbody>${body}</tbody>
+            </table>
+            </div>`);
+        this._bind_sent_back_controls();
+    }
+
+    _bind_sent_back_controls() {
+        this.wrapper.find(".ps-ai-sentback-allusers-chk").off("change").on("change", (e) => {
+            this._sent_back_all_users = $(e.target).is(":checked");
+            this._render_sent_back();
+        });
     }
 
     // ── History tab ───────────────────────────────────────────────────────────

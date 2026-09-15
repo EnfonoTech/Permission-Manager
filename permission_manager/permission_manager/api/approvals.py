@@ -14,7 +14,7 @@ directly from the inbox without visiting the form.
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, cint, cstr, getdate, now_datetime, nowdate
+from frappe.utils import add_days, cint, cstr, date_diff, getdate, now_datetime, nowdate
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1127,3 +1127,161 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
     pending_roles = roles_at.get(current, set())
     return {"chain": chain, "roles": _role_holders(pending_roles),
             "events": events, "current": current, "finished": bool(finished)}
+
+
+# ─── Sent back: rejected, or returned for correction ──────────────────────────
+# A document an approver sends back has nowhere to live. The approver's own action is Completed,
+# the document reverts to a draft, and the inbox -- which lists OPEN actions -- stops mentioning
+# it. On this site 17 such documents were sitting unseen (7 Journal Entries, 6 Purchase Invoices,
+# 3 Purchase Orders, 1 Sales Invoice), plus 19 orphaned Open actions in a Rejected state with no
+# assignee and no submitter, so they reached nobody's inbox either. The person who has to fix the
+# document is the one person never told where it went.
+#
+# Which states count is read from the workflow rather than hardcoded: a transition flagged
+# `is_return_for_correction`, or any transition whose action is Reject. On this site that resolves
+# to "Rejected" for most doctypes and "Draft" for Stock Entry, which is why a Draft target has to
+# prove the document really came back -- an untouched draft nobody ever submitted is not sent back.
+
+_REJECT_ACTION = "Reject"
+
+
+def sent_back_states() -> dict:
+    """doctype -> set of states that mean "an approver sent this back"."""
+    transition = frappe.qb.DocType("PM Workflow Transition")
+    workflow = frappe.qb.DocType("PM Workflow")
+
+    rows = (
+        frappe.qb.from_(transition)
+        .join(workflow)
+        .on(workflow.name == transition.parent)
+        .select(workflow.document_type, transition.next_state)
+        .where(
+            (workflow.is_active == 1)
+            & transition.next_state.isnotnull()
+            & (transition.next_state != "")
+            & ((transition.is_return_for_correction == 1) | (transition.action == _REJECT_ACTION))
+        )
+        .distinct()
+    ).run(as_dict=True)
+
+    states: dict = {}
+    for row in rows:
+        states.setdefault(row.document_type, set()).add(row.next_state)
+    return states
+
+
+def _sent_back_reason(doctype: str, docname: str) -> dict:
+    """Who sent it back, when, and what they said.
+
+    The engine writes a Workflow comment carrying the reason (`apply_workflow` in
+    permission_manager/workflow.py), and the action row carries who completed it. The comment is
+    HTML, so it is stripped back to text -- a reason is worth showing, markup is not.
+    """
+    action = frappe.get_all(
+        "PM Workflow Action",
+        filters={"reference_doctype": doctype, "reference_name": docname, "status": "Completed"},
+        fields=["completed_by", "completed_by_role", "modified"],
+        order_by="modified desc",
+        limit=1,
+    )
+    comment = frappe.get_all(
+        "Comment",
+        filters={"reference_doctype": doctype, "reference_name": docname, "comment_type": "Workflow"},
+        fields=["content", "creation"],
+        order_by="creation desc",
+        limit=1,
+    )
+
+    by_user = action[0].completed_by if action else ""
+    reason = ""
+    if comment:
+        text = frappe.utils.strip_html(comment[0].content or "").strip()
+        # the engine writes either "↩ Returned for Correction by X ... ✏ Reason: ..." or, for a
+        # plain state move, "⊙ Moved to Rejected 💬 Note: ...". Take what the approver typed.
+        for marker in ("Reason:", "Note:"):
+            _, separator, tail = text.partition(marker)
+            if separator:
+                text = tail
+                break
+        reason = text.strip()
+
+    return {
+        "sent_back_by": frappe.db.get_value("User", by_user, "full_name") or by_user or "",
+        "sent_back_on": action[0].modified if action else None,
+        "role": (action[0].completed_by_role if action else "") or "",
+        "reason": reason[:280],
+    }
+
+
+@frappe.whitelist()
+def get_sent_back_documents(all_users: int = 0, from_date: str = None, to_date: str = None,
+                            limit: int = 200) -> list:
+    """Documents an approver rejected or returned, waiting on the person who raised them.
+
+    Scoped the way History is: your own by default, everybody's for a System Manager who asks.
+    "Yours" means the original submitter -- `for_submitter` on the workflow action, which survives
+    an owner overwritten by a bench-execute setup -- falling back to the document's owner.
+    """
+    user = frappe.session.user
+    all_users = cint(all_users) and "System Manager" in frappe.get_roles(user)
+    limit = min(cint(limit) or 200, MAX_HISTORY_ROWS)
+    # Unlike History, there is no default window. A document rejected three months ago still has
+    # to be corrected, and defaulting to the last 30 days hid exactly the ones most overdue: 8 of
+    # the 17 outstanding on this site. A window applies only when the caller asks for one, and the
+    # row count is bounded by `limit` regardless.
+    window = _history_window(from_date, to_date) if not (_blank(from_date) and _blank(to_date)) else {}
+
+    # Stock Entry is excluded here for the same reason the inbox excludes it: its approvals live
+    # in the Warehouse Dashboard, and a storekeeper looking there should not have to look twice.
+    hidden = set(_hidden_doctypes()) | {"Stock Entry"}
+    rows = []
+
+    for doctype, states in sent_back_states().items():
+        if doctype in hidden or not frappe.db.table_exists(doctype):
+            continue
+
+        meta = frappe.get_meta(doctype)
+        if not meta.get_field("workflow_state"):
+            continue
+
+        filters = dict({"workflow_state": ("in", list(states)), "docstatus": 0}, **window)
+        fields = ["name", "owner", "modified", "workflow_state"]
+        if meta.get_field("company"):
+            fields.append("company")
+
+        # get_LIST, never get_all: get_all forces ignore_permissions and would hand a branch-
+        # restricted user every other branch's rejected documents
+        for doc in frappe.get_list(doctype, filters=filters, fields=fields,
+                                   order_by="modified desc", limit=limit):
+            history = frappe.get_all(
+                "PM Workflow Action",
+                filters={"reference_doctype": doctype, "reference_name": doc.name,
+                         "status": "Completed"},
+                fields=["for_submitter"],
+                limit=1,
+            )
+            # a Draft target is also where a document that was never submitted sits; only one that
+            # has been through the workflow and come back belongs here
+            if not history:
+                continue
+
+            submitter = history[0].for_submitter or doc.owner
+            if not all_users and submitter != user and doc.owner != user:
+                continue
+
+            reason = _sent_back_reason(doctype, doc.name)
+            is_return = (doctype, doc.name) in _returns_among([(doctype, doc.name)])
+            rows.append({
+                "doctype": doctype,
+                "transaction": transaction_label(doctype, is_return),
+                "transaction_filter": transaction_filter_value(doctype, is_return),
+                "docname": doc.name,
+                "state": doc.workflow_state,
+                "submitted_by": frappe.db.get_value("User", submitter, "full_name") or submitter,
+                "days": max(date_diff(nowdate(), reason.get("sent_back_on") or doc.modified), 0),
+                "doc_url": "/app/%s/%s" % (_safe_slug(doctype), doc.name),
+                **reason,
+            })
+
+    rows.sort(key=lambda row: (-row["days"], row["docname"]))
+    return rows[:limit]
