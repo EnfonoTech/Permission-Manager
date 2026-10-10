@@ -17,9 +17,23 @@
   "backdate_doctypes",
   "default_backdate_days",
   "allow_amendment_on_original_date",
-  "backdate_rules"
+  "backdate_rules",
+  "approvals_page_section",
+  "show_colleague_approvals"
  ],
  "fields": [
+  {
+   "fieldname": "approvals_page_section",
+   "fieldtype": "Section Break",
+   "label": "Approvals Page"
+  },
+  {
+   "default": "0",
+   "description": "Adds a Colleagues tab to the approvals page: approvals done by other people who hold one of the user's approver roles, for documents the user can open.",
+   "fieldname": "show_colleague_approvals",
+   "fieldtype": "Check",
+   "label": "Show Colleagues' Approvals"
+  },
   {
    "fieldname": "ai_section",
    "fieldtype": "Section Break",
@@ -119,7 +133,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-24 15:00:00.000000",
+ "modified": "2026-10-10 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Permission Manager",
  "name": "PM Settings",

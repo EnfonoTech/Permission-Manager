@@ -120,34 +120,55 @@ def split_transaction_filter(value: str):
     return doctype, (1 if marker == "1" else 0 if marker == "0" else None)
 
 
-def _only_pending_docs(actions: list) -> list:
-    """Keep only actions whose reference document is still a draft (docstatus 0).
+def _state_docstatus(doctypes) -> dict:
+    """(doctype, state) -> the document status that state carries, across PM Workflows."""
+    workflows = frappe.get_all("PM Workflow", filters={"document_type": ["in", list(doctypes)]},
+                               fields=["name", "document_type"])
+    by_name = {w.name: w.document_type for w in workflows}
+    if not by_name:
+        return {}
+    states = {}
+    for row in frappe.get_all("PM Workflow Document State",
+                              filters={"parenttype": "PM Workflow", "parent": ["in", list(by_name)]},
+                              fields=["parent", "state", "doc_status"]):
+        states[(by_name[row.parent], row.state)] = cint(row.doc_status)
+    return states
 
-    Submitted (1) or cancelled (2) documents cannot accept a further pending-state
-    workflow action, so listing them in the approval inbox only confuses approvers
-    and any apply attempt fails with
-    "Workflow state '...' is incompatible with document status". A reference
-    document that no longer exists (hard-deleted) is dropped too. On an unexpected
-    query error we fail OPEN (keep the action) so a transient hiccup never hides a
-    genuinely-pending approval."""
+
+def _only_pending_docs(actions: list) -> list:
+    """Keep only actions whose reference document is still in the state the action waits on.
+
+    An action is created for the document's current state, and that state carries a document
+    status: 0 for the usual approval of a draft, but 1 for a state a SUBMITTED document waits in
+    -- a cancellation request, say, where the approver's answer cancels it. An action whose
+    document has since moved to another status (submitted under a draft-state action, or
+    cancelled) cannot be applied -- "Workflow state '...' is incompatible with document status"
+    -- so it is dropped, as is one whose document no longer exists. On an unexpected query error
+    we fail OPEN (keep the action) so a transient hiccup never hides a genuinely-pending
+    approval."""
     if not actions:
         return actions
     by_dt: dict = {}
     for a in actions:
         if a.reference_doctype and a.reference_name:
             by_dt.setdefault(a.reference_doctype, set()).add(a.reference_name)
-    draft_docs: dict = {}
+    docs: dict = {}
+    unverified: set = set()
     for dt, names in by_dt.items():
         try:
             rows = frappe.get_all(dt, filters={"name": ["in", list(names)]},
                                   fields=["name", "docstatus", "creation"])
             for r in rows:
-                if r.docstatus == 0:
-                    draft_docs[(dt, r.name)] = r.creation
+                docs[(dt, r.name)] = r
         except Exception:
             frappe.clear_last_message()
-            for n in names:            # fail open — cannot verify, keep it
-                draft_docs[(dt, n)] = None
+            unverified |= {(dt, n) for n in names}     # fail open — cannot verify, keep it
+
+    try:
+        expected_status = _state_docstatus(by_dt.keys())
+    except Exception:
+        frappe.clear_last_message()
+        expected_status = {}
 
     # Carry the DOCUMENT's own creation back onto the action. The inbox dates each row by
     # when the document was raised, not by when its action row happened to be written —
@@ -156,8 +177,15 @@ def _only_pending_docs(actions: list) -> list:
     kept = []
     for a in actions:
         key = (a.reference_doctype, a.reference_name)
-        if key in draft_docs:
-            a.doc_creation = draft_docs[key]
+        if key in unverified:
+            a.doc_creation = None
+            kept.append(a)
+            continue
+        row = docs.get(key)
+        if not row:
+            continue
+        if cint(row.docstatus) == expected_status.get((a.reference_doctype, a.workflow_state), 0):
+            a.doc_creation = row.creation
             kept.append(a)
     return kept
 
@@ -217,10 +245,10 @@ def get_my_pending_approvals() -> dict:
     if not actions:
         return {"groups": [], "total": 0}
 
-    # Drop actions whose reference document is already submitted (docstatus 1)
-    # or cancelled (2): they cannot accept a pending-state workflow action and
-    # only confuse approvers (apply errors "Workflow state incompatible with
-    # document status"). Only draft (docstatus 0) documents remain.
+    # Drop actions whose reference document has left the status its waiting state carries
+    # (a draft-state action on a document since submitted, or anything since cancelled): they
+    # cannot be applied and only confuse approvers. A submitted document waiting in a
+    # submitted-status state (a cancellation request) stays.
     actions = _only_pending_docs(actions)
     if not actions:
         return {"groups": [], "total": 0}
@@ -579,6 +607,114 @@ def get_my_approval_history(limit: int = 200, all_users: int = 0,
     rows = [r for r in rows if (r.reference_doctype, r.reference_name) in keep_docs]
 
     return _shape_history(_dedupe_actions(rows), all_users=all_users)
+
+
+# ── colleagues' approvals ─────────────────────────────────────────────────────
+
+#: Roles everyone holds, and System Manager (who already sees everybody's history): sharing one of
+#: these does not make two people colleagues on an approval desk.
+_NOT_A_SHARED_DESK = {"All", "Guest", "Desk User", "Administrator", "System Manager"}
+
+
+def colleague_approvals_enabled() -> bool:
+    """PM Settings › Show Colleagues' Approvals. Off by default: this app is shared, and not every
+    client wants approvers to see each other's decisions."""
+    try:
+        return bool(cint(frappe.get_cached_doc("PM Settings").get("show_colleague_approvals")))
+    except Exception:
+        return False
+
+
+@frappe.whitelist()
+def colleague_approvals_status() -> dict:
+    """Whether the approvals page should offer the Colleagues tab."""
+    return {"enabled": colleague_approvals_enabled()}
+
+
+@frappe.whitelist()
+def get_colleague_approvals(limit: int = 200, from_date: str = None, to_date: str = None,
+                            reference_doctype: str = None, transaction: str = None) -> list:
+    """Approvals done by OTHER people who hold one of your approver roles.
+
+    Two approvers who share a role each see only what they approved themselves; this is the
+    other half -- what the colleague on the same desk decided, so neither is blind to the
+    other's work. A colleague's action counts when one of the roles it was offered to (its
+    permitted roles, or the role it was completed through) is a role you hold. Rows are kept only
+    for documents you can open yourself, so a branch-restricted approver does not see another
+    branch's documents this way. Bounded by the same date window and document cap as History.
+    """
+    if not colleague_approvals_enabled():
+        return []
+    user = frappe.session.user
+    roles = set(frappe.get_roles(user)) - _NOT_A_SHARED_DESK
+    if not roles:
+        return []
+    limit = min(cint(limit) or 200, MAX_HISTORY_ROWS)
+    window = _history_window(from_date, to_date)
+
+    # "!=" also leaves out actions nobody completed (a NULL never compares equal or unequal)
+    filters = dict({"status": "Completed", "completed_by": ["!=", user]}, **window)
+    picked_doctype, picked_is_return = split_transaction_filter(transaction)
+    if not _blank(reference_doctype):
+        filters["reference_doctype"] = reference_doctype
+    elif picked_doctype:
+        filters["reference_doctype"] = picked_doctype
+    hidden = set(_hidden_doctypes())
+
+    rows = [
+        r for r in frappe.get_all("PM Workflow Action", filters=filters, fields=_HISTORY_FIELDS,
+                                  order_by="modified desc", limit=_HISTORY_SCAN_ROWS)
+        if r.completed_by and r.reference_doctype not in hidden
+    ]
+    if not rows:
+        return []
+
+    offered = {}
+    names = [r.name for r in rows]
+    for start in range(0, len(names), 500):
+        for p in frappe.get_all("PM Workflow Action Permitted Role",
+                                filters={"parent": ["in", names[start:start + 500]], "approver_type": "Role"},
+                                fields=["parent", "approver"]):
+            offered.setdefault(p.parent, set()).add(p.approver)
+    shared = {}
+    for r in rows:
+        mine = (offered.get(r.name, set()) | ({r.completed_by_role} if r.completed_by_role else set())) & roles
+        if mine:
+            shared[r.name] = mine
+    rows = [r for r in rows if r.name in shared]
+
+    if picked_is_return is not None and rows:
+        returns = _returns_among((r.reference_doctype, r.reference_name) for r in rows)
+        rows = [r for r in rows
+                if ((r.reference_doctype, r.reference_name) in returns) == bool(picked_is_return)]
+
+    # only documents this user may open: get_list, never get_all, so user permissions hold
+    by_doctype = {}
+    for r in rows:
+        by_doctype.setdefault(r.reference_doctype, set()).add(r.reference_name)
+    visible = set()
+    for doctype, docnames in by_doctype.items():
+        try:
+            names = list(docnames)
+            for start in range(0, len(names), 500):
+                for name in frappe.get_list(doctype, filters={"name": ["in", names[start:start + 500]]},
+                                            pluck="name", limit_page_length=0):
+                    visible.add((doctype, name))
+        except Exception:
+            frappe.clear_last_message()
+    rows = [r for r in rows if (r.reference_doctype, r.reference_name) in visible]
+
+    keep_docs = set()
+    for row in rows:
+        key = (row.reference_doctype, row.reference_name)
+        if key not in keep_docs and len(keep_docs) < limit:
+            keep_docs.add(key)
+    rows = [r for r in rows if (r.reference_doctype, r.reference_name) in keep_docs]
+
+    shaped = _shape_history(_dedupe_actions(rows), all_users=True)
+    for row in shaped:
+        row["role"] = ", ".join(sorted(shared.get(row["name"], []))) or row["role"]
+    return shaped
 
 
 # ── history: bounded, and shaped without a query per row ──────────────────────

@@ -665,6 +665,12 @@ def apply_workflow(doc, action: str, comment: str = None, priority: str = None):
     if is_return and doc.docstatus.is_submitted():
         new_docstatus = DocStatus(0)
 
+    # The document's own hooks run inside the save/submit/cancel below and cannot otherwise see
+    # which action moved it or the comment given with it (the comment is only recorded after) -- a
+    # client app that keeps the reason on the document itself reads it from here.
+    doc.flags.pm_workflow_action = action
+    doc.flags.pm_workflow_comment = comment
+
     _update_docstatus(doc, new_docstatus)
 
     if is_return:

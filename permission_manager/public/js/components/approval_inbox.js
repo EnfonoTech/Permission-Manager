@@ -100,6 +100,8 @@ export class ApprovalInbox {
                     <button class="ps-ai-nav-tab" data-tab="sent_back">${__("Sent Back")}
                         <span class="ps-ai-sentback-badge" style="display:none"></span></button>
                     <button class="ps-ai-nav-tab" data-tab="history">${__("History")}</button>
+                    <button class="ps-ai-nav-tab ps-ai-colleagues-tab" data-tab="colleagues" style="display:none"
+                            title="${__("Approvals done by others who hold one of your approver roles")}">${__("Colleagues")}</button>
                     <button class="ps-ai-nav-tab" data-tab="analytics">${__("Analytics")}</button>
                 </div>
 
@@ -118,7 +120,7 @@ export class ApprovalInbox {
             this._search = $(e.target).val().trim().toLowerCase();
             if (this._active_tab === "pending") this._apply_filter();
             // History rows are already loaded, so filter what is on screen rather than refetch
-            else if (this._active_tab === "history") this._paint_history();
+            else if (this._active_tab === "history" || this._active_tab === "colleagues") this._paint_history();
             else if (this._active_tab === "sent_back") this._paint_sent_back();
         });
 
@@ -130,20 +132,20 @@ export class ApprovalInbox {
             // counts documents, so asking it for one type returns that type's whole history
             // instead of whatever survived a general cap. A dropdown changes rarely, unlike the
             // search box, so a round trip here costs nothing.
-            else if (this._active_tab === "history") this._render_history();
+            else if (this._active_tab === "history" || this._active_tab === "colleagues") this._render_history();
         });
 
         this.wrapper.find(".ps-ai-from-date").on("change", (e) => {
             this._from_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
-            else if (this._active_tab === "history") this._render_history();
+            else if (this._active_tab === "history" || this._active_tab === "colleagues") this._render_history();
             else if (this._active_tab === "sent_back") this._render_sent_back();
         });
 
         this.wrapper.find(".ps-ai-to-date").on("change", (e) => {
             this._to_date = $(e.target).val();
             if (this._active_tab === "pending") this._apply_filter();
-            else if (this._active_tab === "history") this._render_history();
+            else if (this._active_tab === "history" || this._active_tab === "colleagues") this._render_history();
             else if (this._active_tab === "sent_back") this._render_sent_back();
         });
 
@@ -163,14 +165,14 @@ export class ApprovalInbox {
         // on Pending carried over with no visible control to explain it, and the tab could only
         // report "N of M match the filters" without showing the filters.
         const $search_row = this.wrapper.find(".ps-ai-search, .ps-ai-dt-filter, .ps-ai-date-range");
-        $search_row.toggle(tab === "pending" || tab === "history" || tab === "sent_back");
+        $search_row.toggle(tab === "pending" || tab === "history" || tab === "sent_back" || tab === "colleagues");
         this.wrapper.find(".ps-ai-stats-bar").toggle(tab === "pending");
 
         if (tab === "pending") {
             this._render();
         } else if (tab === "sent_back") {
             this._render_sent_back();
-        } else if (tab === "history") {
+        } else if (tab === "history" || tab === "colleagues") {
             this._render_history();
         } else if (tab === "analytics") {
             this._render_analytics();
@@ -191,6 +193,7 @@ export class ApprovalInbox {
                 _order_actions(this.data);   // Accept before Reject, everywhere
                 this._switch_tab(this._active_tab);
                 this._refresh_sent_back_badge();
+                this._refresh_colleagues_tab();
             },
             error: () => {
                 $body.html(`
@@ -1081,6 +1084,20 @@ export class ApprovalInbox {
 
     // ── History tab ───────────────────────────────────────────────────────────
 
+    // The Colleagues tab exists only where PM Settings turns it on; ask once per load.
+    _refresh_colleagues_tab() {
+        frappe.call({
+            method: "permission_manager.permission_manager.api.approvals.colleague_approvals_status",
+            callback: (r) => {
+                const on = !!(r.message && r.message.enabled);
+                this.wrapper.find(".ps-ai-colleagues-tab").toggle(on);
+                if (!on && this._active_tab === "colleagues") {
+                    this.wrapper.find('.ps-ai-nav-tab[data-tab="pending"]').trigger("click");
+                }
+            },
+        });
+    }
+
     _render_history() {
         const $body = this.wrapper.find(".ps-ai-body");
         $body.html(`<div class="ps-loading">${__("Loading history…")}</div>`);
@@ -1088,14 +1105,19 @@ export class ApprovalInbox {
         // Only a System Manager may look beyond their own actions, and the server enforces
         // that too - this just decides whether the box is worth showing.
         const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
-        const all_users = is_sysmgr && !!this._history_all_users;
+        // The Colleagues tab reads the same shape of rows from its own endpoint, always with the
+        // "Submitted By" column (the rows are other people's by definition).
+        const colleagues = this._active_tab === "colleagues";
+        const all_users = colleagues || (is_sysmgr && !!this._history_all_users);
 
         frappe.call({
-            method: "permission_manager.permission_manager.api.approvals.get_my_approval_history",
+            method: colleagues
+                ? "permission_manager.permission_manager.api.approvals.get_colleague_approvals"
+                : "permission_manager.permission_manager.api.approvals.get_my_approval_history",
             // Only send a date when there is one: an empty value reaches the server as the
             // string "null", which is not a date and used to fail the whole request.
             args: Object.assign(
-                { limit: 500, all_users: all_users ? 1 : 0 },
+                colleagues ? { limit: 500 } : { limit: 500, all_users: all_users ? 1 : 0 },
                 this._from_date ? { from_date: this._from_date } : {},
                 this._to_date ? { to_date: this._to_date } : {},
                 // the dropdown's value, which carries the return reading with the doctype
@@ -1122,6 +1144,7 @@ export class ApprovalInbox {
     _paint_history() {
         const $body = this.wrapper.find(".ps-ai-body");
         const is_sysmgr = (frappe.user_roles || []).includes("System Manager");
+        const colleagues = this._active_tab === "colleagues";
         const all_users = !!this._history_showed_all;
         const loaded = this._history_rows || [];
 
@@ -1155,7 +1178,7 @@ export class ApprovalInbox {
                     ? __("Showing {0} to {1}", [this._from_date || "…", this._to_date || "…"])
                     : __("Showing the last 30 days — set the dates above for another period");
 
-                const toggle = is_sysmgr
+                const toggle = is_sysmgr && !colleagues
                     ? `<label class="ps-ai-allusers">
                            <input type="checkbox" class="ps-ai-allusers-chk" ${all_users ? "checked" : ""} />
                            ${__("All users")}
@@ -1175,12 +1198,15 @@ export class ApprovalInbox {
                     const filtered_out = loaded.length > 0;
                     $body.html(bar + `<div class="ps-ai-empty"><h4>${
                         filtered_out ? __("Nothing matches the filters.")
+                            : colleagues ? __("No approvals by colleagues in this period.")
                             : all_users ? __("No approvals in this period.")
                             : __("No approval history yet.")
                     }</h4><p class="text-muted">${
                         filtered_out
                             ? __("{0} rows were loaded for this period. Clear the search or the transaction filter.",
                                  [loaded.length])
+                            : colleagues
+                                ? __("Approvals done by others who hold one of your approver roles appear here.")
                             : all_users
                                 ? __("Nobody completed an approval in the selected dates.")
                                 : __("Actions appear here once approvals are processed on your documents.")
@@ -1202,7 +1228,7 @@ export class ApprovalInbox {
                             <th>${__("Current State")}</th>
                             <th>${__("Actioned By")}</th>
                             ${all_users ? `<th>${__("Submitted By")}</th>` : ""}
-                            <th>${__("Via Role")}</th>
+                            <th>${colleagues ? __("Shared Role") : __("Via Role")}</th>
                         </tr></thead>
                         <tbody>
                         ${rows.map((row, i) => `<tr class="ps-ai-hist-row" data-idx="${i}">
