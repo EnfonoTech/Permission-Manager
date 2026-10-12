@@ -106,8 +106,9 @@ class _Base(FrappeTestCase):
         )
         self.doc = frappe._dict({"doctype": self.ref_doctype, "name": self.ref_name, "owner": "Administrator"})
 
-    def _supplying(self, role, caller_roles=None):
-        """Transitions for the test's step supplied in memory; optionally a fixed caller role set."""
+    def _supplying(self, role, caller_roles=None, can_edit=True):
+        """Transitions for the test's step supplied in memory; optionally a fixed caller role set,
+        and whether the new approver may edit the document."""
         real_get_all, real_get_roles, state = frappe.get_all, frappe.get_roles, self.state
 
         def fake_get_all(doctype, *args, **kwargs):
@@ -124,6 +125,7 @@ class _Base(FrappeTestCase):
         stack.enter_context(patch.object(frappe, "get_all", side_effect=fake_get_all))
         if caller_roles is not None:
             stack.enter_context(patch.object(frappe, "get_roles", side_effect=fake_get_roles))
+            stack.enter_context(patch.object(frappe, "has_permission", return_value=can_edit))
             stack.enter_context(patch.object(frappe.db, "commit"))
             stack.enter_context(patch.object(frappe, "sendmail"))
         return stack
@@ -189,8 +191,8 @@ class TestReassignApprover(_Base):
             ["assigned_to", "is_reassigned", "reassigned_by", "status"], as_dict=True,
         )
 
-    def _reassign(self, step_role, caller_roles):
-        with self._supplying(step_role, caller_roles=caller_roles):
+    def _reassign(self, step_role, caller_roles, can_edit=True):
+        with self._supplying(step_role, caller_roles=caller_roles, can_edit=can_edit):
             return reassign_workflow_approver(self.ref_doctype, self.ref_name, self.user, "covering")
 
     def test_a_system_manager_can_hand_it_to_someone_without_the_role(self):
@@ -216,6 +218,15 @@ class TestReassignApprover(_Base):
     def test_an_hr_manager_cannot_hand_it_to_someone_without_the_role(self):
         with self.assertRaises(frappe.ValidationError):
             self._reassign(NOBODY_ROLE, ["HR Manager"])
+        row = self._row()
+        self.assertFalse(row.assigned_to)
+        self.assertEqual(row.is_reassigned, 0)
+
+    def test_a_user_who_cannot_edit_the_document_cannot_be_handed_it(self):
+        """The authority is the workflow's; document permissions are untouched, and every
+        transition ends in a save, so such a user would still meet Not Permitted on the form."""
+        with self.assertRaises(frappe.ValidationError):
+            self._reassign(NOBODY_ROLE, ["System Manager"], can_edit=False)
         row = self._row()
         self.assertFalse(row.assigned_to)
         self.assertEqual(row.is_reassigned, 0)

@@ -853,6 +853,15 @@ def reassign_workflow_approver(
                   "cannot be handed to a user who lacks the step's role. Run bench migrate first."),
                 title=_("Migrate Required"),
             )
+        # The authority handed over is the workflow's; the document's own permissions are not
+        # touched, and every transition ends in a save. Someone who cannot edit the document
+        # could be handed the approval and still get "Not Permitted" on the form.
+        if not frappe.has_permission(doctype, "write", doc=doc, user=new_approver):
+            frappe.throw(
+                _("%(user)s has no permission to edit this %(doctype)s, so they could not act on it even "
+                  "if the approval were handed to them.") % {"user": new_approver, "doctype": _(doctype)},
+                title=_("Cannot Reassign"),
+            )
 
     # Update the action — replace permitted_roles so the permission query
     # only exposes the new approver (not the previous role holders).

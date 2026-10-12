@@ -502,8 +502,9 @@ Lets a System Manager or HR Manager manually redirect a stuck approval to a diff
   An action that is merely pinned to a named user (Employee Approver Matrix) has no stamp and gets
   no such authority
 - Handing an approval to a user who does **not** hold the step's role grants them that authority, so
-  it is limited to System Managers (the comment on the document says so). An HR Manager can still
-  redirect an approval to someone who could already act on it
+  it is limited to System Managers (the comment on the document says so), and refused when that user
+  has no permission to edit the document, because every transition ends in a save. An HR Manager can
+  still redirect an approval to someone who could already act on it
 - The button is only visible to System Manager and HR Manager roles
 
 ---
