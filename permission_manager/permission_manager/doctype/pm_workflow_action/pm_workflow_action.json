@@ -18,7 +18,9 @@
   "user",
   "section_break_qvyg",
   "permitted_roles",
-  "return_to_originator"
+  "return_to_originator",
+  "is_reassigned",
+  "reassigned_by"
  ],
  "fields": [
   {
@@ -129,10 +131,28 @@
    "label": "Return to Originator",
    "default": "0",
    "description": "If set on an ad-hoc (forwarded) action, the originator's action re-opens after the ad-hoc approver gives input, instead of the flow advancing."
+  },
+  {
+   "fieldname": "is_reassigned",
+   "fieldtype": "Check",
+   "label": "Reassigned By Admin",
+   "default": "0",
+   "read_only": 1,
+   "no_copy": 1,
+   "description": "Set when an administrator handed this approval to the assignee by name. The assignee may then act on it without holding the role its step asks for."
+  },
+  {
+   "depends_on": "eval: doc.is_reassigned",
+   "fieldname": "reassigned_by",
+   "fieldtype": "Link",
+   "label": "Reassigned By",
+   "options": "User",
+   "read_only": 1,
+   "no_copy": 1
   }
  ],
  "links": [],
- "modified": "2026-05-17 00:00:00",
+ "modified": "2026-10-12 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Permission Manager",
  "name": "PM Workflow Action",

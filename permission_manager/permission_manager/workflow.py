@@ -419,6 +419,37 @@ def get_transitions(
     return [t for t in transitions if is_transition_condition_satisfied(t, doc)]
 
 
+def _holds_reassigned_action(doc, current_state: str, user: str) -> bool:
+    """True if an administrator handed this document's open approval to `user` by name.
+
+    reassign_workflow_approver stamps `is_reassigned` on the action it moves, and that stamp, not
+    the assignment alone, is what carries authority. A matrix-routed action is pinned to a named
+    user too, but the Employee Approval Chain decides who may act on it and has to keep deciding;
+    treating every pinned action as authority would let an approver the chain has since moved on
+    from keep the right to approve a document that is no longer theirs.
+    """
+    if doc is None or not doc.get("name") or not current_state or not user:
+        return False
+    # New code can reach a site a moment before the migrate that adds the column, and nothing can
+    # have been stamped until then.
+    if not frappe.db.has_column("PM Workflow Action", "is_reassigned"):
+        return False
+    return bool(
+        frappe.db.exists(
+            "PM Workflow Action",
+            {
+                "reference_doctype": doc.get("doctype"),
+                "reference_name": doc.get("name"),
+                "workflow_state": current_state,
+                "assigned_to": user,
+                "status": "Open",
+                "is_reassigned": 1,
+                "is_adhoc": 0,
+            },
+        )
+    )
+
+
 def get_allowed_transitions_for_user(
     workflow: str,
     current_state: str,
@@ -432,6 +463,9 @@ def get_allowed_transitions_for_user(
       - Resolve the approver from the submitter's Employee Approval Chain
       - Only allow if current user IS that resolved approver
     Otherwise use standard role / user check.
+
+    Two kinds of direct assignment override the above for the one document and step they name:
+    an ad-hoc (forwarded) approver, and an approver an administrator reassigned the approval to.
     """
     user = user or frappe.session.user
     transitions = frappe.get_all(
@@ -473,6 +507,14 @@ def get_allowed_transitions_for_user(
             if cint(adhoc.return_to_originator):
                 return []
             return transitions
+
+    # Reassigned approver: an administrator named this user as the approver of this very approval
+    # (reassign_workflow_approver), usually because nobody who holds the step's role can take it.
+    # The authority comes from that decision, not from a role, which is the point of doing it.
+    # Whatever the caller enforces afterwards still applies: the transition's own condition and
+    # the self-approval rule.
+    if _holds_reassigned_action(doc, current_state, user):
+        return transitions
 
     allowed = []
 
@@ -760,7 +802,9 @@ def reassign_workflow_approver(
     Admin reassigns the pending PM Workflow Action for a document to a new approver.
     Creates an audit comment and notifies the new approver.
 
-    Only System Managers and HR Managers may reassign.
+    Only System Managers and HR Managers may reassign. The new approver can act on the approval
+    from then on, even without the role its step asks for; handing it to someone who lacks that
+    role is limited to System Managers, because it grants the authority along with the document.
     """
     if not frappe.db.exists("User", new_approver):
         frappe.throw(_("User '{0}' does not exist.").format(new_approver))
@@ -780,18 +824,51 @@ def reassign_workflow_approver(
 
     old_approver = frappe.db.get_value("PM Workflow Action", action_name, "assigned_to") or _("(role-based)")
 
+    action_doc = frappe.get_doc("PM Workflow Action", action_name)
+    doc = frappe.get_doc(doctype, docname)
+
+    # Handing an approval to someone who holds none of the roles its step asks for hands them the
+    # authority as well (see get_allowed_transitions_for_user), and that is a System Manager's
+    # call. Anyone else the button is offered to, an HR Manager for one, may still redirect an
+    # approval to a user who could already act on it, which is all the button used to do. Refusing
+    # here beats what used to happen instead: the document in the new approver's inbox, with
+    # Approve and Reject drawn there and no way to use them.
+    workflow = get_workflow(doctype, docname, doc=doc, throw=False)
+    can_already_act = bool(
+        workflow
+        and get_allowed_transitions_for_user(workflow.name, action_doc.workflow_state, new_approver, doc)
+    )
+    grants_authority = not can_already_act
+    has_stamp_column = frappe.db.has_column("PM Workflow Action", "is_reassigned")
+    if grants_authority:
+        if "System Manager" not in set(frappe.get_roles()):
+            frappe.throw(
+                _("%s holds none of the roles this approval step needs. Only a System Manager can hand "
+                  "an approval to someone who does not.") % new_approver,
+                title=_("Cannot Reassign"),
+            )
+        if not has_stamp_column:
+            frappe.throw(
+                _("This site has not been migrated for the reassignment change yet, so an approval "
+                  "cannot be handed to a user who lacks the step's role. Run bench migrate first."),
+                title=_("Migrate Required"),
+            )
+
     # Update the action — replace permitted_roles so the permission query
     # only exposes the new approver (not the previous role holders).
-    action_doc = frappe.get_doc("PM Workflow Action", action_name)
     action_doc.assigned_to = new_approver
     action_doc.status = "Open"
     action_doc.set("permitted_roles", [
         {"approver_type": "User", "approver": new_approver}
     ])
+    if has_stamp_column:
+        # The stamp is what lets the assignee act without the role. Matrix-routed actions are also
+        # pinned to a named user and must not gain that, so only this function writes it.
+        action_doc.is_reassigned = 1
+        action_doc.reassigned_by = frappe.session.user
     action_doc.save(ignore_permissions=True)
 
     # Add an audit comment on the document
-    doc = frappe.get_doc(doctype, docname)
     doc.add_comment(
         "Workflow",
         (
@@ -800,6 +877,7 @@ def reassign_workflow_approver(
             f"From: <em>{old_approver}</em> → To: <em>{new_approver}</em><br>"
             f"By: {frappe.session.user}"
             + (f"<br>Reason: {reason}" if reason else "")
+            + ("<br><em>Can act on this step without holding its role.</em>" if grants_authority else "")
             + "</div>"
         ),
     )
@@ -829,6 +907,7 @@ def reassign_workflow_approver(
         "action": action_name,
         "old_approver": old_approver,
         "new_approver": new_approver,
+        "grants_authority": grants_authority,
     }
 
 

@@ -495,6 +495,15 @@ Lets a System Manager or HR Manager manually redirect a stuck approval to a diff
   By: admin@co.com | Reason: On leave
   ```
 - An email notification is sent to the new approver
+- The new approver can approve or reject it from the document and from My Approvals, **even if they
+  do not hold the role the step asks for**. The action carries an `is_reassigned` stamp (and
+  `reassigned_by`) and the engine honours that stamp for this document at this step only — it ends
+  when the document moves on. The transition's own condition and the self-approval rule still apply.
+  An action that is merely pinned to a named user (Employee Approver Matrix) has no stamp and gets
+  no such authority
+- Handing an approval to a user who does **not** hold the step's role grants them that authority, so
+  it is limited to System Managers (the comment on the document says so). An HR Manager can still
+  redirect an approval to someone who could already act on it
 - The button is only visible to System Manager and HR Manager roles
 
 ---
