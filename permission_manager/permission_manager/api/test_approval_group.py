@@ -272,3 +272,28 @@ class TestPIImportApprover(FrappeTestCase):
 			PI_LOCAL_ROLE, pi_import_role)
 
 		self.assertNotEqual(PI_LOCAL_ROLE, pi_import_role())
+
+
+class TestPISendNeedsAttachment(FrappeTestCase):
+	"""Sending ANY Purchase Invoice for approval needs a file on it.
+
+	The check lives in the engine and fires only on a transition with require_attachment, and
+	the PI generator never set it on Send for Approval (2026-10-13: a Telecommunication invoice
+	could go up with nothing attached unless a stage happened to demand it on Approve).
+	"""
+
+	def test_both_send_for_approval_transitions_require_a_file(self):
+		from unittest.mock import patch
+
+		from permission_manager.permission_manager.api import approval_group
+
+		with patch.object(approval_group, "_build") as build, \
+				patch.object(approval_group, "_company_currency", return_value="BHD"):
+			approval_group._build_pi({})
+		_dt, _name, _states, tx = build.call_args[0]
+		sends = [t for t in tx if t["action"] == "Send for Approval"]
+		self.assertEqual({t["state"] for t in sends}, {"Draft", "Rejected"})
+		self.assertTrue(all(t["require_attachment"] == 1 for t in sends))
+		# approve / reject stay free of it unless the stage asks
+		self.assertTrue(all(t["require_attachment"] == 0 for t in tx
+		                    if t["action"] in ("Approve", "Reject")))

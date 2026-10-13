@@ -345,7 +345,8 @@ def _build_pi(groups):
 	LOCAL = "doc.is_return or ((not doc.custom_approval_group) and doc.currency == %r)" % cur
 	IMPORT = "(not doc.custom_approval_group) and (not doc.is_return) and doc.currency != %r" % cur
 	tx = [
-		_t("Draft", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1),
+		# every Purchase Invoice goes up with its supplier bill attached, group or no group
+		_t("Draft", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1, attach=1),
 		_t("Pending", "Approve", "Approved", PI_LOCAL_ROLE, cond=LOCAL),
 		_t("Pending", "Reject", "Rejected", PI_LOCAL_ROLE, cond=LOCAL, rfc=1, comment=1),
 		_t("Pending", "Approve", "Approved", imp, cond=IMPORT),
@@ -354,7 +355,7 @@ def _build_pi(groups):
 	tx += _group_stage_transitions(
 		groups, lambda g, c: "doc.custom_approval_group == %r" % g,
 		"Pending", ["Pending Accounts"] + ["Pending L%d" % k for k in range(3, _max_level(groups) + 1)])
-	tx.append(_t("Rejected", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1))
+	tx.append(_t("Rejected", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1, attach=1))
 	states = [_st("Draft", "0", PI_INITIATE_ROLE), _st("Pending", "0", "Purchase Manager"),
 	          _st("Pending Accounts", "0", "Accountant"),
 	          _st("Approved", "1", "Purchase Manager"), _st("Rejected", "0", PI_INITIATE_ROLE)]
