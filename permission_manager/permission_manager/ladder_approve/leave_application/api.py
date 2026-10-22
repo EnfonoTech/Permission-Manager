@@ -80,6 +80,32 @@ def _multi_level_enabled(employee: str) -> bool:
     return not disabled
 
 
+def _apply_leave_workflow(doc, next_state: str) -> bool:
+    """
+    Move the leave to `next_state` through the active Leave Application workflow.
+
+    A workflow (hr_suite ships one) refuses a hand-set Approved/Rejected on a draft;
+    its own transition sets the status and submits in one step. Returns False when
+    no workflow is active, so the caller keeps the plain status update.
+    """
+    from frappe.model.workflow import apply_workflow, get_transitions, get_workflow_name
+
+    if not get_workflow_name("Leave Application"):
+        return False
+
+    action = next(
+        (t.action for t in get_transitions(doc) if t.next_state == next_state), None
+    )
+    if not action:
+        frappe.throw(
+            _("The approval workflow has no action that moves this leave to {0} for you.").format(
+                _(next_state)
+            )
+        )
+    apply_workflow(doc, action)
+    return True
+
+
 # ─── Permission query condition ───────────────────────────────────────────────
 
 def leave_application_permission_query(user: str, doctype: str = "Leave Application") -> str:
@@ -156,8 +182,9 @@ def forward_leave(docname: str, designation: str = None) -> str:
         frappe.throw(_("This leave application has already been submitted or cancelled."))
 
     if designation == "hr":
-        doc.status = "Approved"
-        doc.save(ignore_permissions=True)
+        if not _apply_leave_workflow(doc, "Approved"):
+            doc.status = "Approved"
+            doc.save(ignore_permissions=True)
         frappe.db.commit()
         return _("Leave application approved.")
 
@@ -201,14 +228,16 @@ def reject_leave(docname: str, reason: str = "") -> str:
     if doc.docstatus != 0:
         frappe.throw(_("This leave application has already been submitted or cancelled."))
 
-    doc.status = "Rejected"
-
     description = doc.get("description") or ""
     if reason:
         rejection_note = _("Rejected by {0}: {1}").format(frappe.session.user, reason)
         doc.description = f"{description}\n\n{rejection_note}".strip() if description else rejection_note
 
+    # the workflow reloads the document, so the note is saved (still Open) first
     doc.save(ignore_permissions=True)
+    if not _apply_leave_workflow(doc, "Rejected"):
+        doc.status = "Rejected"
+        doc.save(ignore_permissions=True)
     frappe.db.commit()
 
     # Notify the applicant
