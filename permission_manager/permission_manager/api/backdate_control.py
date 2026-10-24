@@ -153,6 +153,10 @@ def allowed_backdate_days(doctype, user=None, settings=None):
             continue
 
         days = cint(rule.max_backdate_days)
+        if days < 0:
+            # -1 is "no limit", so no other rule can be more generous. max() alone would rank it
+            # below a 0 and take the permission away from someone holding a capped role as well.
+            return NO_LIMIT
         best = days if best is None else max(best, days)
 
     if best is None:
@@ -234,11 +238,16 @@ def validate_posting_date(doc, method=None):
             _(doctype), frappe.bold(frappe.format(earliest, {"fieldtype": "Date"}))
         )
 
+    # Where the allowance is granted, so nobody goes looking for it in another settings page
+    # (a sales-return override, say, is a different control and gives no backdating)
+    grant = _("An administrator can allow more under PM Settings, in Backdating Rules.")
+
     frappe.throw(
-        _("{0} is set to {1}, which is further back than you are allowed to post. {2}").format(
+        _("{0} is set to {1}, which is further back than you are allowed to post. {2} {3}").format(
             frappe.bold(_(label)),
             frappe.bold(frappe.format(getdate(value), {"fieldtype": "Date"})),
             allowance,
+            grant,
         ),
         title=_("Backdated Entry Not Allowed"),
     )

@@ -56,6 +56,28 @@ class TestBackdateControl(FrappeTestCase):
 
 		self.assertEqual(allowed_backdate_days("Purchase Invoice", "Administrator", settings), 30)
 
+	def test_no_limit_rule_is_the_most_generous(self):
+		"""-1 means no limit, so it must beat a rule that caps another role the user holds —
+		max() alone ranks it below 0 and the user is refused the day they were told they could."""
+		settings = _settings([
+			_rule(value="Accounts User", days=0),
+			_rule(value="Accounts Manager", days=NO_LIMIT),
+		])
+
+		self.assertEqual(
+			allowed_backdate_days("Purchase Invoice", "Administrator", settings), NO_LIMIT
+		)
+
+	def test_no_limit_rule_for_a_user_beats_a_capped_role(self):
+		settings = _settings([
+			_rule(applies_to="User", value="backdater@example.com", days=NO_LIMIT),
+			_rule(applies_to="Role", value="All", days=0),
+		])
+
+		self.assertEqual(
+			allowed_backdate_days("Purchase Invoice", "backdater@example.com", settings), NO_LIMIT
+		)
+
 	def test_user_rule_matches_by_name(self):
 		settings = _settings([
 			_rule(applies_to="User", value="backdater@example.com", days=90),
