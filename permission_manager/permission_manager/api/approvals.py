@@ -1182,7 +1182,11 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
         return {"chain": [], "roles": []}
 
     doc = frappe.get_doc(doctype, docname)
-    current = doc.get("workflow_state") or ""
+    # The workflow names the field that carries its state. Reading a hard-coded `workflow_state`
+    # found nothing on a document whose workflow keeps its state elsewhere (a request's `status`),
+    # so its row opened with no current step and no "Who can act now".
+    state_field = frappe.db.get_value("PM Workflow", wf, "workflow_state_field") or "workflow_state"
+    current = doc.get(state_field) or ""
 
     states = frappe.get_all(
         "PM Workflow Document State", filters={"parent": wf},
@@ -1206,6 +1210,12 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
         if t.approver_type in (None, "", "Role") and t.allowed:
             roles_at.setdefault(t.state, set()).add(t.allowed)
 
+    if not finals:
+        # a workflow that never submits anything (a request, say) has no submitting state: its end
+        # is the state that every other step leads to and nothing leaves
+        reached = {nxt for nexts in edges.values() for nxt in nexts}
+        finals = {s for s in reached if not edges.get(s)}
+
     start = states[0].state if states else "Draft"
     behind = _shortest_path(edges, start, {current}) if current and current != start else [start]
     ahead = _shortest_path(edges, current or start, finals)
@@ -1227,7 +1237,7 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
             changed = frappe.parse_json(v.data).get("changed") or []
         except Exception:
             continue
-        move = next((c for c in changed if c and c[0] == "workflow_state"), None)
+        move = next((c for c in changed if c and c[0] == state_field), None)
         if not move:
             continue
         was, now = move[1] or "", move[2] or ""
