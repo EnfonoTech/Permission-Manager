@@ -1705,10 +1705,14 @@ class PermissionStudio {
 	}
 
 	_show_manage_roles_dialog(user, current_roles) {
-		const current_role_names = new Set(current_roles.map((r) => r.role));
+		let current_role_names = new Set(current_roles.map((r) => r.role));
+		let changed = false;
+		let busy = false;
 
 		const dlg = new frappe.ui.Dialog({
 			title: __("Manage Roles — {0}", [user]),
+			// the matrix behind this dialog was drawn from the old roles
+			onhide: () => { if (changed) this.load_user_matrix(user); },
 			fields: [
 				{
 					fieldtype: "Link",
@@ -1726,6 +1730,37 @@ class PermissionStudio {
 			primary_action: () => dlg.hide(),
 		});
 
+		// One round trip for add and remove. The server returns the roles the user REALLY has after
+		// the save (a role profile can undo a plain edit), so the list is redrawn from that, never
+		// from what was asked for.
+		const _change_roles = (add_roles, remove_roles, done_label, indicator) => {
+			if (busy) return;
+			busy = true;
+			dlg.set_df_property("add_role", "read_only", 1);
+			frappe.call({
+				method: "permission_manager.permission_manager.api.quickfix.update_user_roles",
+				args: { user, add_roles: JSON.stringify(add_roles), remove_roles: JSON.stringify(remove_roles) },
+				callback: (r) => {
+					const res = r.message || {};
+					if (!res.success) return;
+					current_role_names = new Set(res.roles || []);
+					const moved = (res.added || []).length + (res.removed || []).length;
+					if (moved) changed = true;
+					_refresh_roles();
+					if (res.note) {
+						frappe.show_alert({ message: `${done_label} ${res.note}`, indicator }, 12);
+					} else {
+						frappe.show_alert({ message: done_label, indicator });
+					}
+				},
+				always: () => {
+					busy = false;
+					dlg.set_df_property("add_role", "read_only", 0);
+					dlg.set_value("add_role", "");
+				},
+			});
+		};
+
 		const _refresh_roles = () => {
 			const $html = dlg.fields_dict.current_roles_html.$wrapper;
 			const rows = [...current_role_names].sort().map((role) => `
@@ -1739,35 +1774,14 @@ class PermissionStudio {
 			$html.html(rows || `<em>${__("No roles assigned.")}</em>`);
 			$html.find(".ps-remove-role-btn").on("click", (e) => {
 				const role = $(e.currentTarget).data("role");
-				frappe.call({
-					method: "permission_manager.permission_manager.api.quickfix.update_user_roles",
-					args: { user, add_roles: "[]", remove_roles: JSON.stringify([role]) },
-					callback: (r) => {
-						if (r.message?.success) {
-							current_role_names.delete(role);
-							_refresh_roles();
-							frappe.show_alert({ message: __("Role removed."), indicator: "orange" });
-						}
-					},
-				});
+				_change_roles([], [role], __("Role removed."), "orange");
 			});
 		};
 
 		dlg.fields_dict.add_role.df.change = () => {
 			const role = dlg.get_value("add_role");
-			if (!role || current_role_names.has(role)) return;
-			frappe.call({
-				method: "permission_manager.permission_manager.api.quickfix.update_user_roles",
-				args: { user, add_roles: JSON.stringify([role]), remove_roles: "[]" },
-				callback: (r) => {
-					if (r.message?.success) {
-						current_role_names.add(role);
-						dlg.set_value("add_role", "");
-						_refresh_roles();
-						frappe.show_alert({ message: __("Role added."), indicator: "green" });
-					}
-				},
-			});
+			if (!role || busy || current_role_names.has(role)) return;
+			_change_roles([role], [], __("Role added."), "green");
 		};
 
 		_refresh_roles();
