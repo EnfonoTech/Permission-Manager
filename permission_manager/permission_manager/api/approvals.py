@@ -1397,8 +1397,19 @@ def get_sent_back_documents(all_users: int = 0, from_date: str = None, to_date: 
 
         # get_LIST, never get_all: get_all forces ignore_permissions and would hand a branch-
         # restricted user every other branch's rejected documents
-        for doc in frappe.get_list(doctype, filters=filters, fields=fields,
-                                   order_by="modified desc", limit=limit):
+        queued = len(frappe.local.message_log)
+        try:
+            candidates = frappe.get_list(doctype, filters=filters, fields=fields,
+                                         order_by="modified desc", limit=limit)
+        except frappe.PermissionError:
+            # A type this user may not read has no documents for them to see. Raising here
+            # failed the whole list for every approver who lacks read on just one type (Sent
+            # back was unavailable to all but System Managers). Skip the type, and drop the
+            # "No permission" message the check queued so no stray popup follows.
+            del frappe.local.message_log[queued:]
+            continue
+
+        for doc in candidates:
             history = frappe.get_all(
                 "PM Workflow Action",
                 filters={"reference_doctype": doctype, "reference_name": doc.name,
