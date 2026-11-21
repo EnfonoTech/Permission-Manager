@@ -48,7 +48,8 @@ def chain(*rows):
     """The employee's approval chain, whatever the employee."""
     with mock.patch("frappe.db.table_exists", return_value=True), \
          mock.patch("frappe.get_all", return_value=list(rows)), \
-         mock.patch("frappe.db.get_value", side_effect=_get_value):
+         mock.patch("frappe.db.get_value", side_effect=_get_value), \
+         mock.patch.object(api, "_pm_workflow_active", return_value=False):
         yield
 
 
@@ -66,14 +67,41 @@ class FakeLeave(SimpleNamespace):
     def is_new(self):
         return self.new
 
+    def get_doc_before_save(self):
+        return self.before
+
+    def set_onload(self, key, value):
+        self.onloaded[key] = value
+
+    def save(self, **kwargs):
+        # what the world looked like at the moment of the save
+        self.saves.append({"ignore_validate": self.flags.get("ignore_validate"),
+                           "ladder_flag": frappe.flags.get("pm_ladder_action"),
+                           "status": self.status, "leave_approver": self.leave_approver})
+
     meta = SimpleNamespace(has_field=lambda fieldname: True)
 
 
 def leave(**kw):
     base = dict(employee="1262", owner="hr.clerk@x.com", leave_approver=None,
-                leave_approver_name=None, new=True, docstatus=0, status="Open")
+                leave_approver_name=None, new=True, docstatus=0, status="Open",
+                before=None, flags=frappe._dict(), saves=[], onloaded={}, description="",
+                name="HR-LAP-1", doctype="Leave Application", leave_type="Annual Leave", from_date="2026-11-22",
+                to_date="2026-12-27")
     base.update(kw)
     return FakeLeave(**base)
+
+
+def saved(**kw):
+    """A leave already in the database, as it was before this save."""
+    return leave(new=False, **kw)
+
+
+@contextmanager
+def on_chain(applies=True):
+    """Whether the leave travels its employee's chain, whatever the data says."""
+    with mock.patch.object(api, "_ladder_applies", return_value=applies):
+        yield
 
 
 THREE = (row(1, "jarees@x.com"), row(2, "hr@x.com"), row(3, "head@x.com"))
@@ -138,7 +166,9 @@ class TestBeforeSave(TestCase):
             api.before_save(doc)
         self.assertEqual(doc.leave_approver, "jarees@x.com")
         self.assertEqual(doc.leave_approver_name, "Jarees")
-        enabled.assert_called_once_with("1262")
+        # asked about the employee on leave every time, never about the typist
+        self.assertTrue(enabled.call_args_list)
+        self.assertTrue(all(call.args == ("1262",) for call in enabled.call_args_list))
 
     def test_a_new_leave_replaces_the_departments_default(self):
         """HRMS fills in the Department's approver first; the chain is the more specific word."""
@@ -411,3 +441,231 @@ class TestLifecycle(TestCase):
         out = self._chain_of(leave_approver="jarees@x.com")
         self.assertTrue(out["chain"][-1]["final"])
         self.assertEqual(out["chain"][-1]["roles"], ["HR"])
+
+
+class TestLadderApplies(TestCase):
+    def _applies(self, *, workflow=False, enabled=True, chain_rows=THREE):
+        with chain(*chain_rows), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=workflow), \
+             mock.patch.object(api, "_multi_level_enabled", return_value=enabled):
+            return api._ladder_applies(leave())
+
+    def test_an_employee_with_a_chain_is_on_it(self):
+        self.assertTrue(self._applies())
+
+    def test_no_chain_no_ladder(self):
+        self.assertFalse(self._applies(chain_rows=()))
+
+    def test_an_opt_out_leaves_the_plain_hrms_way(self):
+        self.assertFalse(self._applies(enabled=False))
+
+    def test_a_pm_workflow_takes_the_doctype_over(self):
+        self.assertFalse(self._applies(workflow=True))
+
+
+class TestStatusIsTheChainsToMove(TestCase):
+    def _refused(self, doc, **flags):
+        with on_chain(), mock.patch.dict(frappe.flags, flags):
+            try:
+                api._refuse_hand_set_status(doc)
+            except Exception:
+                return True
+        return False
+
+    def test_status_edited_by_hand_on_a_saved_leave_is_refused(self):
+        doc = leave(new=False, status="Approved", before=saved(status="Open"))
+        self.assertTrue(self._refused(doc))
+
+    def test_so_is_a_move_to_pending_next_approval(self):
+        doc = leave(new=False, status="Pending Next Approval", before=saved(status="Open"))
+        self.assertTrue(self._refused(doc))
+
+    def test_an_edit_that_leaves_status_alone_passes(self):
+        doc = leave(new=False, status="Open", before=saved(status="Open"))
+        self.assertFalse(self._refused(doc))
+
+    def test_a_leave_cannot_be_created_already_approved(self):
+        self.assertTrue(self._refused(leave(new=True, status="Approved", before=None)))
+        self.assertFalse(self._refused(leave(new=True, status="Open", before=None)))
+
+    def test_the_chains_own_step_raises_the_flag_and_passes(self):
+        doc = leave(new=False, status="Approved", before=saved(status="Open"))
+        self.assertFalse(self._refused(doc, pm_ladder_action=True))
+
+    def test_patches_migrations_and_imports_pass(self):
+        doc = leave(new=False, status="Approved", before=saved(status="Open"))
+        for flag in ("in_patch", "in_migrate", "in_install", "in_import"):
+            with self.subTest(flag=flag):
+                self.assertFalse(self._refused(doc, **{flag: True}))
+
+    def test_a_leave_off_the_chain_is_left_alone(self):
+        doc = leave(new=False, status="Approved", before=saved(status="Open"))
+        with on_chain(False):
+            api._refuse_hand_set_status(doc)
+
+
+class TestSubmit(TestCase):
+    def _submit(self, doc, *, hr, applies=True):
+        with on_chain(applies), mock.patch.object(api, "_user_is_hr", return_value=hr):
+            try:
+                api.before_submit(doc)
+            except Exception:
+                return "refused"
+        return "allowed"
+
+    def test_a_leave_still_on_the_chain_cannot_be_submitted_even_by_hr(self):
+        doc = leave(new=False, docstatus=1, status="Open", before=saved(status="Open"))
+        self.assertEqual(self._submit(doc, hr=True), "refused")
+
+    def test_status_set_by_hand_in_the_same_request_as_the_submit_is_refused(self):
+        doc = leave(new=False, docstatus=1, status="Approved", before=saved(status="Open"))
+        self.assertEqual(self._submit(doc, hr=True), "refused")
+
+    def test_pending_next_approval_cannot_be_submitted(self):
+        doc = leave(new=False, docstatus=1, status="Pending Next Approval",
+                    before=saved(status="Pending Next Approval"))
+        self.assertEqual(self._submit(doc, hr=True), "refused")
+
+    def test_a_leave_the_chain_approved_can_be_submitted(self):
+        doc = leave(new=False, docstatus=1, status="Approved", before=saved(status="Approved"))
+        self.assertEqual(self._submit(doc, hr=True), "allowed")
+
+    def test_a_leave_the_chain_rejected_can_be_submitted_to_close_it(self):
+        doc = leave(new=False, docstatus=1, status="Rejected", before=saved(status="Rejected"))
+        self.assertEqual(self._submit(doc, hr=True), "allowed")
+
+    def test_off_the_chain_hr_may_submit_as_before(self):
+        doc = leave(new=False, docstatus=1, status="Open", before=saved(status="Open"))
+        self.assertEqual(self._submit(doc, hr=True, applies=False), "allowed")
+
+    def test_off_the_chain_somebody_else_still_needs_an_approved_leave(self):
+        open_ = leave(new=False, docstatus=1, status="Open", before=saved(status="Open"))
+        done = leave(new=False, docstatus=1, status="Approved", before=saved(status="Approved"))
+        self.assertEqual(self._submit(open_, hr=False, applies=False), "refused")
+        self.assertEqual(self._submit(done, hr=False, applies=False), "allowed")
+
+
+class TestStepSave(TestCase):
+    def test_the_step_skips_validation_and_raises_the_flag_only_while_saving(self):
+        doc = leave(new=False, status="Approved")
+        api._save_step(doc)
+        (at_save,) = doc.saves
+        self.assertTrue(at_save["ignore_validate"])
+        self.assertTrue(at_save["ladder_flag"])
+        self.assertFalse(frappe.flags.get("pm_ladder_action"))
+
+    def test_the_flag_comes_down_even_when_the_save_fails(self):
+        doc = leave(new=False)
+        doc.save = mock.Mock(side_effect=ValueError("boom"))
+        with self.assertRaises(ValueError):
+            api._save_step(doc)
+        self.assertFalse(frappe.flags.get("pm_ladder_action"))
+
+
+class TestForwardAndReject(TestCase):
+    """The buttons: each is one _save_step, taken by whoever may act."""
+
+    def _run(self, fn, doc, *args, user="jarees@x.com"):
+        with as_user(user), \
+             mock.patch("frappe.get_doc", return_value=doc), \
+             mock.patch("frappe.db.get_value", side_effect=_get_value), \
+             mock.patch("frappe.db.commit"), \
+             mock.patch.object(api, "_apply_leave_workflow", return_value=False), \
+             mock.patch.object(api, "_multi_level_enabled", return_value=True), \
+             chain(*THREE):
+            return fn("HR-LAP-1", *args)
+
+    def test_forward_moves_the_leave_one_level_up_in_one_step(self):
+        doc = saved(leave_approver="jarees@x.com", status="Open")
+        self._run(api.forward_leave, doc)
+        self.assertEqual(doc.leave_approver, "hr@x.com")
+        self.assertEqual(doc.leave_approver_name, "HR Coordinator")
+        self.assertEqual(doc.status, "Open")
+        self.assertEqual(len(doc.saves), 1)
+        self.assertTrue(doc.saves[0]["ignore_validate"])
+
+    def test_the_final_approval_sets_approved_inside_the_chains_own_step(self):
+        doc = saved(leave_approver="hr@x.com", status="Open")
+        self._run(api.forward_leave, doc, "hr", user="hr@x.com")
+        self.assertEqual([(x["status"], x["ladder_flag"]) for x in doc.saves], [("Approved", True)])
+
+    def test_reject_saves_the_note_then_the_status_both_as_steps(self):
+        doc = saved(leave_approver="jarees@x.com", status="Open")
+        self._run(api.reject_leave, doc, "clash with audit")
+        self.assertEqual([x["status"] for x in doc.saves], ["Open", "Rejected"])
+        self.assertTrue(all(x["ladder_flag"] for x in doc.saves))
+        self.assertIn("clash with audit", doc.description)
+
+    def test_somebody_who_is_not_the_approver_is_turned_away(self):
+        doc = saved(leave_approver="jarees@x.com", status="Open")
+        with self.assertRaises(Exception):
+            self._run(api.forward_leave, doc, user="other@x.com")
+        with self.assertRaises(Exception):
+            self._run(api.reject_leave, doc, "no", user="other@x.com")
+        self.assertEqual(doc.saves, [])
+
+    def test_a_submitted_leave_cannot_be_moved(self):
+        doc = saved(leave_approver="jarees@x.com", status="Approved", docstatus=1)
+        with self.assertRaises(Exception):
+            self._run(api.forward_leave, doc)
+
+
+class TestOnload(TestCase):
+    def _payload(self, doc, *, applies=True, may_act=True, final=False):
+        with on_chain(applies), \
+             mock.patch.object(api, "_may_act", return_value=may_act), \
+             mock.patch.object(api, "_is_final_approver", return_value=final), \
+             mock.patch("frappe.db.get_value", side_effect=_get_value), \
+             chain(*THREE):
+            api.onload(doc)
+        return doc.onloaded.get("pm_ladder")
+
+    def test_a_leave_on_the_chain_says_where_it_stands(self):
+        doc = saved(leave_approver="hr@x.com", status="Open")
+        payload = self._payload(doc, final=True)
+        self.assertEqual(payload, {"active": True, "can_act": True, "final": True,
+                                   "holder": "hr@x.com", "holder_name": "HR Coordinator", "level": 2})
+
+    def test_somebody_who_may_not_act_is_told_so(self):
+        doc = saved(leave_approver="jarees@x.com", status="Open")
+        self.assertFalse(self._payload(doc, may_act=False)["can_act"])
+
+    def test_a_decided_leave_is_no_longer_active(self):
+        for status in ("Approved", "Rejected"):
+            with self.subTest(status=status):
+                doc = saved(leave_approver="hr@x.com", status=status)
+                payload = self._payload(doc)
+                self.assertFalse(payload["active"])
+                self.assertFalse(payload["can_act"])
+
+    def test_nothing_is_sent_for_a_new_a_submitted_or_an_off_chain_leave(self):
+        self.assertIsNone(self._payload(leave(new=True)))
+        self.assertIsNone(self._payload(saved(docstatus=1, status="Approved")))
+        self.assertIsNone(self._payload(saved(leave_approver="jarees@x.com"), applies=False))
+
+
+class TestHandingOverTheShare(TestCase):
+    """HRMS takes the leave off the old approver through the SAVER's permissions, and a manager who
+    is not HR may not delete a DocShare: forwarding failed on a live site with "User not allowed to
+    delete DocShare" and then 'You need to have "Share" permission'."""
+
+    def test_the_old_approvers_share_goes_with_every_permission_check_stepped_over(self):
+        with mock.patch("frappe.db.get_value", return_value="share-1"),              mock.patch("frappe.delete_doc") as delete:
+            api._drop_share(leave(name="HR-LAP-1"), "jarees@x.com")
+        delete.assert_called_once_with("DocShare", "share-1", ignore_permissions=True,
+                                       flags={"ignore_share_permission": True})
+
+    def test_no_share_or_no_approver_means_nothing_to_delete(self):
+        with mock.patch("frappe.delete_doc") as delete:
+            with mock.patch("frappe.db.get_value", return_value=None):
+                api._drop_share(leave(name="HR-LAP-1"), "jarees@x.com")
+            api._drop_share(leave(name="HR-LAP-1"), None)
+        delete.assert_not_called()
+
+    def test_forward_hands_the_share_over_before_the_save(self):
+        calls = []
+        doc = saved(leave_approver="jarees@x.com", status="Open")
+        with as_user("jarees@x.com"),              mock.patch("frappe.get_doc", return_value=doc),              mock.patch("frappe.db.get_value", side_effect=_get_value),              mock.patch("frappe.db.commit"),              mock.patch.object(api, "_multi_level_enabled", return_value=True),              mock.patch.object(api, "_drop_share", side_effect=lambda d, u: calls.append(("drop", u))),              mock.patch.object(api, "_save_step", side_effect=lambda d: calls.append(("save", d.leave_approver))),              chain(*THREE):
+            api.forward_leave("HR-LAP-1")
+        # the share of the one handing on, then the save that names the next approver
+        self.assertEqual(calls, [("drop", "jarees@x.com"), ("save", "hr@x.com")])

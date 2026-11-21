@@ -114,6 +114,7 @@ doc_events = {
     },
     # Multi-level Leave Approval
     "Leave Application": {
+        "onload":        "permission_manager.permission_manager.ladder_approve.leave_application.api.onload",
         "before_save":   "permission_manager.permission_manager.ladder_approve.leave_application.api.before_save",
         "before_submit": "permission_manager.permission_manager.ladder_approve.leave_application.api.before_submit",
         "on_update":     "permission_manager.permission_manager.ladder_approve.utils.after_save",

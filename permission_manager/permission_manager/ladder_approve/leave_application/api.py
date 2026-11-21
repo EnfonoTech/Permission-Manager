@@ -126,6 +126,87 @@ def _set_approver(doc, user: str):
         doc.leave_approver_name = frappe.db.get_value("User", user, "full_name") or user
 
 
+def _ladder_applies(doc) -> bool:
+    """
+    True when this leave travels its employee's approval chain: the employee has a level-1
+    approver for it, has not opted out, and no PM Workflow has taken Leave Application over.
+    Everybody else keeps the plain HRMS way (an approver edits Status and submits).
+    """
+    employee = doc.get("employee")
+    return bool(
+        employee
+        and not _pm_workflow_active()
+        and _multi_level_enabled(employee)
+        and _get_chain_approver(employee, level=1)
+    )
+
+
+def _status_was_hand_set(doc) -> bool:
+    """Is Status being changed (or created at anything but Open) by this very save?"""
+    before = doc.get_doc_before_save()
+    if before is None:
+        return doc.get("status") != "Open"
+    return before.get("status") != doc.get("status")
+
+
+def _refuse_hand_set_status(doc):
+    """
+    On the chain Status moves only through the Approve / Reject buttons.
+
+    HR may edit Status (a permission level above the rest of the form), and a leave HR sets to
+    Approved by hand can be submitted without anyone on the chain having seen it. The buttons run
+    inside _save_step, which raises the flag this checks; patches, migrations and imports pass.
+    """
+    flags = frappe.flags
+    if (flags.get("pm_ladder_action") or flags.get("in_patch") or flags.get("in_migrate")
+            or flags.get("in_install") or flags.get("in_import")):
+        return
+    if _ladder_applies(doc) and _status_was_hand_set(doc):
+        frappe.throw(
+            _("The Status of this leave moves only through the Approve and Reject buttons of its "
+              "approval chain. It cannot be changed by hand."),
+            title=_("Use The Approval Chain"),
+        )
+
+
+def _drop_share(doc, user):
+    """
+    Take the leave off the approver who is handing it on.
+
+    HRMS does this itself when the approver changes (hrms.hr.utils.share_doc_with_approver), but
+    through the permissions of whoever is saving, and an approver who is not HR may not delete a
+    DocShare: forwarding failed with "User not allowed to delete DocShare". Done here with
+    permissions ignored, HRMS then finds nothing left to remove. Part of the same request, so a
+    failed save puts the share back.
+    """
+    if not user:
+        return
+    share = frappe.db.get_value(
+        "DocShare", {"user": user, "share_name": doc.name, "share_doctype": doc.doctype}
+    )
+    if share:
+        # two checks stand in the way: delete permission, and DocShare's own "Share" permission
+        frappe.delete_doc("DocShare", share, ignore_permissions=True,
+                          flags={"ignore_share_permission": True})
+
+
+def _save_step(doc):
+    """
+    Save one step of the chain (forward, approve, reject) on the approver's behalf.
+
+    The approver is usually not HR, and hr_suite refuses any save of a pending leave by anyone who
+    is not ("Only HR may change it now"), which would refuse the very button that moves it on. So
+    the step skips validation: nothing in it is the approver's data to validate, and Submit runs
+    the full validation again before anything is posted.
+    """
+    doc.flags.ignore_validate = True
+    frappe.flags.pm_ladder_action = True
+    try:
+        doc.save(ignore_permissions=True)
+    finally:
+        frappe.flags.pm_ladder_action = False
+
+
 def _multi_level_enabled(employee: str) -> bool:
     """Return False if the employee has disabled multi-level approval."""
     if not frappe.db.has_column("Employee", "custom_disable_multilevel_approval"):
@@ -197,6 +278,8 @@ def before_save(doc, method=None):
     and a new leave ignored the chain because HRMS had already filled that default in. A leave
     that is already on its way keeps the approver it has: forward_leave moves it up.
     """
+    _refuse_hand_set_status(doc)
+
     employee = doc.get("employee")
     if not employee or not _multi_level_enabled(employee):
         return
@@ -213,7 +296,21 @@ def before_submit(doc, method=None):
     """
     Block submit unless the leave is Approved (or the submitter is HR).
     This prevents employees from self-submitting unapproved leaves.
+
+    A leave on the approval chain is stricter, HR included: it must already have been approved (or
+    rejected) by the chain's own buttons. Status edited by hand in the same request as the Submit
+    is refused, and so is anything still waiting in the chain.
     """
+    if _ladder_applies(doc):
+        _refuse_hand_set_status(doc)
+        if doc.get("status") not in ("Approved", "Rejected"):
+            frappe.throw(
+                _("This leave is still on its approval chain. It can be submitted once it has "
+                  "been approved or rejected there."),
+                title=_("Approval Required"),
+            )
+        return
+
     if _user_is_hr():
         return
 
@@ -222,6 +319,27 @@ def before_submit(doc, method=None):
             _("Leave Application must be Approved before it can be submitted."),
             title=_("Approval Required"),
         )
+
+
+def onload(doc, method=None):
+    """
+    Tell the form where the leave stands on the chain, so it can hide Submit while the chain
+    decides and offer Approve / Reject to whoever may act. Sent with the document, so it is
+    there on the first paint (no round trip to race a re-render).
+    """
+    if doc.is_new() or doc.docstatus != 0 or not _ladder_applies(doc):
+        return
+
+    holder = doc.get("leave_approver")
+    decided = doc.get("status") in ("Approved", "Rejected")
+    doc.set_onload("pm_ladder", {
+        "active": not decided,
+        "can_act": (not decided) and _may_act(doc),
+        "final": _is_final_approver(holder) if holder else False,
+        "holder": holder,
+        "holder_name": (frappe.db.get_value("User", holder, "full_name") or holder) if holder else "",
+        "level": _chain_level_of(doc.employee, holder) if holder else None,
+    })
 
 
 # ─── Whitelisted actions ──────────────────────────────────────────────────────
@@ -244,7 +362,7 @@ def forward_leave(docname: str, designation: str = None) -> str:
     if designation == "hr":
         if not _apply_leave_workflow(doc, "Approved"):
             doc.status = "Approved"
-            doc.save(ignore_permissions=True)
+            _save_step(doc)
         frappe.db.commit()
         return _("Leave application approved.")
 
@@ -268,8 +386,10 @@ def forward_leave(docname: str, designation: str = None) -> str:
     if not next_approver:
         frappe.throw(_("No level-2 approver or HR Manager found. Please set an approval chain on the Employee record."))
 
+    previous = doc.leave_approver
     _set_approver(doc, next_approver)
-    doc.save(ignore_permissions=True)
+    _drop_share(doc, previous)
+    _save_step(doc)
     frappe.db.commit()
 
     approver_name = frappe.db.get_value("User", next_approver, "full_name") or next_approver
@@ -294,10 +414,10 @@ def reject_leave(docname: str, reason: str = "") -> str:
         doc.description = f"{description}\n\n{rejection_note}".strip() if description else rejection_note
 
     # the workflow reloads the document, so the note is saved (still Open) first
-    doc.save(ignore_permissions=True)
+    _save_step(doc)
     if not _apply_leave_workflow(doc, "Rejected"):
         doc.status = "Rejected"
-        doc.save(ignore_permissions=True)
+        _save_step(doc)
     frappe.db.commit()
 
     # Notify the applicant
