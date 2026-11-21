@@ -214,6 +214,11 @@ def _ladder_leave_items(user: str) -> list:
     items = []
     for r in rows:
         approve = APPROVE_ACTIONS[0] if r.final else APPROVE_ACTIONS[1]
+        # Administrator sees leaves held by other people: say whose they are. Your own need no name.
+        holder = ""
+        if r.leave_approver and r.leave_approver != user:
+            holder = (frappe.db.get_value("User", r.leave_approver, "full_name")
+                      or r.leave_approver.split("@")[0])
         items.append({
             "name": "ladder::Leave Application::" + r.name,
             "doctype": "Leave Application",
@@ -225,7 +230,7 @@ def _ladder_leave_items(user: str) -> list:
             "priority": "Medium",
             "state": _("Level {0}").format(r.level) if r.level else _("Awaiting approval"),
             "role_id": _("Approval Chain"),
-            "holder": "",
+            "holder": holder,
             "days": int((now - r.creation).total_seconds() / 86400),
             # the row is about the person who is away, not the HR clerk who typed it in
             "creator": r.employee_name or r.employee or "",

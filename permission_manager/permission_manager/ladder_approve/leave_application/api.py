@@ -111,6 +111,14 @@ def _get_employee_for_user(user: str):
     return frappe.db.get_value("Employee", {"user_id": user, "status": "Active"}, "name")
 
 
+def _may_act(doc) -> bool:
+    """The named approver may act on the leave. So may Administrator, standing in: My Approvals
+    already shows Administrator every open PM Workflow Action, and a leave on the chain is no
+    different."""
+    user = frappe.session.user
+    return user == "Administrator" or user == doc.get("leave_approver")
+
+
 def _set_approver(doc, user: str):
     """Point the leave at `user`, keeping the name HRMS shows beside the field in step."""
     doc.leave_approver = user
@@ -228,7 +236,7 @@ def forward_leave(docname: str, designation: str = None) -> str:
     """
     doc = frappe.get_doc("Leave Application", docname)
 
-    if doc.leave_approver != frappe.session.user:
+    if not _may_act(doc):
         frappe.throw(_("You are not the designated approver for this leave application."))
     if doc.docstatus != 0:
         frappe.throw(_("This leave application has already been submitted or cancelled."))
@@ -275,7 +283,7 @@ def reject_leave(docname: str, reason: str = "") -> str:
     """
     doc = frappe.get_doc("Leave Application", docname)
 
-    if doc.leave_approver != frappe.session.user:
+    if not _may_act(doc):
         frappe.throw(_("You are not the designated approver for this leave application."))
     if doc.docstatus != 0:
         frappe.throw(_("This leave application has already been submitted or cancelled."))
@@ -329,21 +337,27 @@ def _is_final_approver(user: str = None) -> bool:
 
 
 def leaves_waiting_on(user: str) -> list:
-    """Open leave applications whose current approver is `user`, oldest first."""
+    """
+    Open leave applications whose current approver is `user`, oldest first. Administrator sees
+    every open one, as it does for PM Workflow Actions, and each row says who holds it.
+    """
     if not user or _pm_workflow_active():
         return []
 
+    filters = {"docstatus": 0, "status": "Open"}
+    filters["leave_approver"] = ["is", "set"] if user == "Administrator" else user
+
     rows = frappe.get_all(
         "Leave Application",
-        filters={"leave_approver": user, "docstatus": 0, "status": "Open"},
+        filters=filters,
         fields=["name", "employee", "employee_name", "leave_type", "from_date", "to_date",
-                "total_leave_days", "owner", "creation"],
+                "total_leave_days", "owner", "creation", "leave_approver"],
         order_by="creation asc",
     )
-    final = _is_final_approver(user)
     for row in rows:
-        row["level"] = _chain_level_of(row.employee, user)
-        row["final"] = final
+        # the step belongs to the leave's current approver, whoever is looking at it
+        row["level"] = _chain_level_of(row.employee, row.leave_approver)
+        row["final"] = _is_final_approver(row.leave_approver)
     return rows
 
 
@@ -356,7 +370,12 @@ def apply_inbox_action(docname: str, action: str, comment: str = ""):
         return None
 
     if action in APPROVE_ACTIONS:
-        return forward_leave(docname, "hr" if _is_final_approver() else None)
+        # whether this is the last step depends on who holds the leave, so Administrator standing
+        # in for a level-1 manager forwards it rather than approving it past the chain
+        holder = frappe.session.user
+        if holder == "Administrator":
+            holder = frappe.db.get_value("Leave Application", docname, "leave_approver")
+        return forward_leave(docname, "hr" if _is_final_approver(holder) else None)
 
     if action == REJECT_ACTION:
         reason = (comment or "").strip()
@@ -410,5 +429,15 @@ def lifecycle(docname: str) -> dict:
         "state": _("Final approval"), "status": status, "final": True,
         "by": "", "roles": [] if status == "done" else holder,
     })
-    return {"chain": phases, "roles": [], "events": [], "current": doc.status,
+    # "Who can act now": the person the leave is with. Once it is decided, nobody.
+    who = []
+    if not decided and doc.leave_approver:
+        level = _chain_level_of(doc.employee, doc.leave_approver)
+        who = [{
+            "role": _("Level {0}").format(level) if level else _("Approver"),
+            "users": [{"user": doc.leave_approver, "full_name": name_of(doc.leave_approver)}],
+            "count": 1,
+        }]
+
+    return {"chain": phases, "roles": who, "events": [], "current": doc.status,
             "finished": bool(decided)}

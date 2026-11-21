@@ -51,6 +51,11 @@ def chain(*rows):
         yield
 
 
+def as_user(name):
+    """Whoever is at the keyboard (the test runner is Administrator unless told otherwise)."""
+    return mock.patch.object(frappe, "session", frappe._dict(user=name))
+
+
 class FakeLeave(SimpleNamespace):
     """The bits of a Leave Application the ladder reads."""
 
@@ -168,21 +173,46 @@ class TestBeforeSave(TestCase):
 
 class TestInboxAction(TestCase):
     def test_a_ladder_approve_runs_the_forward_step(self):
-        with mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+        with as_user("jarees@x.com"), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=False), \
              mock.patch.object(api, "_is_final_approver", return_value=False), \
              mock.patch.object(api, "forward_leave", return_value="done") as forward:
             self.assertEqual(api.apply_inbox_action("HR-LAP-1", "Approve & Forward"), "done")
         forward.assert_called_once_with("HR-LAP-1", None)
 
     def test_an_hr_approver_gives_the_final_approval(self):
-        with mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+        with as_user("hr@x.com"), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=False), \
              mock.patch.object(api, "_is_final_approver", return_value=True), \
              mock.patch.object(api, "forward_leave", return_value="done") as forward:
             api.apply_inbox_action("HR-LAP-1", "Approve")
         forward.assert_called_once_with("HR-LAP-1", "hr")
 
+    def test_administrator_standing_in_for_level_one_forwards_not_approves(self):
+        """Whether it is the last step depends on who holds the leave, not on who clicks."""
+        with as_user("Administrator"), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+             mock.patch("frappe.db.get_value", return_value="jarees@x.com"), \
+             mock.patch.object(api, "_is_final_approver",
+                               side_effect=lambda user=None: user == "hr@x.com") as final, \
+             mock.patch.object(api, "forward_leave", return_value="done") as forward:
+            api.apply_inbox_action("HR-LAP-1", "Approve & Forward")
+        forward.assert_called_once_with("HR-LAP-1", None)
+        final.assert_called_once_with("jarees@x.com")
+
+    def test_administrator_standing_in_for_hr_gives_the_final_approval(self):
+        with as_user("Administrator"), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+             mock.patch("frappe.db.get_value", return_value="hr@x.com"), \
+             mock.patch.object(api, "_is_final_approver",
+                               side_effect=lambda user=None: user == "hr@x.com"), \
+             mock.patch.object(api, "forward_leave", return_value="done") as forward:
+            api.apply_inbox_action("HR-LAP-1", "Approve")
+        forward.assert_called_once_with("HR-LAP-1", "hr")
+
     def test_a_rejection_needs_its_reason(self):
-        with mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+        with as_user("jarees@x.com"), \
+             mock.patch.object(api, "_pm_workflow_active", return_value=False), \
              mock.patch.object(api, "reject_leave") as reject:
             with self.assertRaises(Exception):
                 api.apply_inbox_action("HR-LAP-1", "Reject", "   ")
@@ -202,20 +232,69 @@ class TestInboxAction(TestCase):
         forward.assert_not_called()
 
 
+class TestWhoMayAct(TestCase):
+    def test_the_named_approver_may(self):
+        with as_user("jarees@x.com"):
+            self.assertTrue(api._may_act(leave(leave_approver="jarees@x.com")))
+
+    def test_somebody_else_may_not(self):
+        with as_user("other@x.com"):
+            self.assertFalse(api._may_act(leave(leave_approver="jarees@x.com")))
+
+    def test_the_owner_who_keyed_it_in_may_not_approve_it(self):
+        with as_user("hr.clerk@x.com"):
+            self.assertFalse(api._may_act(leave(owner="hr.clerk@x.com", leave_approver="jarees@x.com")))
+
+    def test_administrator_may_stand_in(self):
+        with as_user("Administrator"):
+            self.assertTrue(api._may_act(leave(leave_approver="jarees@x.com")))
+
+
+class TestWhoIsListed(TestCase):
+    def _waiting(self, user, rows):
+        levels = {"jarees@x.com": 1, "hr@x.com": 2}
+        with mock.patch.object(api, "_pm_workflow_active", return_value=False), \
+             mock.patch("frappe.get_all", return_value=rows) as get_all, \
+             mock.patch.object(api, "_chain_level_of", side_effect=lambda emp, u: levels.get(u)), \
+             mock.patch.object(api, "_is_final_approver", side_effect=lambda u=None: u == "hr@x.com"):
+            return api.leaves_waiting_on(user), get_all.call_args.kwargs["filters"]
+
+    def _leave(self, name, approver):
+        return frappe._dict(name=name, employee="1262", employee_name="S", leave_approver=approver)
+
+    def test_an_approver_is_asked_only_for_their_own(self):
+        _rows, filters = self._waiting("jarees@x.com", [])
+        self.assertEqual(filters["leave_approver"], "jarees@x.com")
+        self.assertEqual((filters["docstatus"], filters["status"]), (0, "Open"))
+
+    def test_administrator_is_asked_for_every_held_leave(self):
+        _rows, filters = self._waiting("Administrator", [])
+        self.assertEqual(filters["leave_approver"], ["is", "set"])
+
+    def test_each_row_carries_the_step_of_whoever_holds_it(self):
+        rows, _filters = self._waiting("Administrator", [self._leave("A", "jarees@x.com"),
+                                                          self._leave("B", "hr@x.com")])
+        self.assertEqual([(r.name, r.level, r.final) for r in rows],
+                         [("A", 1, False), ("B", 2, True)])
+
+    def test_nobody_listed_for_no_user(self):
+        self.assertEqual(api.leaves_waiting_on(""), [])
+
+
 class TestInboxRows(TestCase):
     def _rows(self, **kw):
         creation = frappe.utils.add_days(frappe.utils.now_datetime(), -3)
         base = frappe._dict(name="HR-LAP-2026-00002", employee="1262",
                             employee_name="Shihabudheen", leave_type="Annual Leave",
                             owner="hr.clerk@x.com", creation=creation,
-                            level=1, final=False)
+                            leave_approver="jarees@x.com", level=1, final=False)
         base.update(kw)
         return [base]
 
-    def _items(self, rows):
+    def _items(self, rows, user="jarees@x.com"):
         with mock.patch.object(api, "leaves_waiting_on", return_value=rows), \
              mock.patch("frappe.db.get_value", side_effect=_get_value):
-            return approvals._ladder_leave_items("jarees@x.com")
+            return approvals._ladder_leave_items(user)
 
     def test_the_row_is_about_the_employee_and_carries_the_chain_steps(self):
         (item,) = self._items(self._rows())
@@ -227,6 +306,14 @@ class TestInboxRows(TestCase):
         self.assertTrue(item["ladder"])
         self.assertEqual(item["doc_url"], "/app/leave-application/HR-LAP-2026-00002")
         self.assertGreaterEqual(item["days"], 3)
+
+    def test_your_own_leave_needs_no_name_in_the_with_column(self):
+        (item,) = self._items(self._rows())
+        self.assertEqual(item["holder"], "")
+
+    def test_administrator_is_told_whose_leave_it_is(self):
+        (item,) = self._items(self._rows(), user="Administrator")
+        self.assertEqual(item["holder"], "Jarees")
 
     def test_the_last_approver_sees_approve_not_approve_and_forward(self):
         (item,) = self._items(self._rows(final=True))
@@ -303,6 +390,21 @@ class TestLifecycle(TestCase):
         out = self._chain_of(leave_approver="hr@x.com", status="Approved")
         self.assertTrue(all(p["status"] == "done" for p in out["chain"]))
         self.assertTrue(out["finished"])
+
+    def test_who_can_act_now_is_the_person_the_leave_is_with(self):
+        out = self._chain_of(leave_approver="hr@x.com")
+        self.assertEqual(out["roles"], [{"role": "Level 2", "count": 1,
+                                         "users": [{"user": "hr@x.com", "full_name": "HR Coordinator"}]}])
+
+    def test_who_can_act_now_is_nobody_once_it_is_decided(self):
+        out = self._chain_of(leave_approver="hr@x.com", status="Approved")
+        self.assertEqual(out["roles"], [])
+
+    def test_the_label_follows_the_holders_level(self):
+        out = self._chain_of(leave_approver="head@x.com")
+        self.assertEqual(out["roles"][0]["role"], "Level 3")
+        out = self._chain_of(leave_approver="jarees@x.com")
+        self.assertEqual(out["roles"][0]["users"][0]["full_name"], "Jarees")
 
     def test_the_last_step_is_always_hr_and_marked_final(self):
         out = self._chain_of(leave_approver="jarees@x.com")
