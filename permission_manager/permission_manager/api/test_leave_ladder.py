@@ -26,6 +26,7 @@ NAMES = {
     "jarees@x.com": "Jarees",
     "hr@x.com": "HR Coordinator",
     "head@x.com": "Head",
+    "hr.clerk@x.com": "HR Clerk",
 }
 
 
@@ -296,11 +297,11 @@ class TestInboxRows(TestCase):
              mock.patch("frappe.db.get_value", side_effect=_get_value):
             return approvals._ladder_leave_items(user)
 
-    def test_the_row_is_about_the_employee_and_carries_the_chain_steps(self):
+    def test_the_creator_is_who_raised_it_and_the_row_carries_the_chain_steps(self):
         (item,) = self._items(self._rows())
         self.assertEqual(item["doctype"], DT)
         self.assertEqual(item["docname"], "HR-LAP-2026-00002")
-        self.assertEqual(item["creator"], "Shihabudheen")
+        self.assertEqual(item["creator"], "HR Clerk")
         self.assertEqual(item["available_actions"], ["Approve & Forward", "Reject"])
         self.assertEqual(item["category"], "Approval Pending")
         self.assertTrue(item["ladder"])

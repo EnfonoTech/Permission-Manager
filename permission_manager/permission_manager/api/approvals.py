@@ -232,8 +232,9 @@ def _ladder_leave_items(user: str) -> list:
             "role_id": _("Approval Chain"),
             "holder": holder,
             "days": int((now - r.creation).total_seconds() / 86400),
-            # the row is about the person who is away, not the HR clerk who typed it in
-            "creator": r.employee_name or r.employee or "",
+            # who raised it, as for every other row (the employee on leave is in the preview)
+            "creator": (frappe.db.get_value("User", r.owner, "full_name")
+                        or (r.owner or "").split("@")[0]),
             "category": "Approval Pending",
             "available_actions": [approve, REJECT_ACTION],
             "doc_url": "/app/" + _safe_slug("Leave Application") + "/" + r.name,
