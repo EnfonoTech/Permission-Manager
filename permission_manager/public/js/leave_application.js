@@ -6,26 +6,19 @@
 frappe.ui.form.on("Leave Application", {
 	refresh(frm) {
 		if (frm.doc.docstatus !== 0) return;
+		// Approved/Rejected but still in Draft (the old Approve only saved): keep the
+		// standard Submit button instead of offering the decision again
+		if (frm.doc.status !== "Open") return;
 		if (frm.doc.leave_approver !== frappe.session.user) return;
 
 		frm.page.clear_primary_action();
 
 		// ── Forward / Final Approve ───────────────────────────────────────────
-		frappe.user.has_role(["HR Manager", "HR User"]).then
-			? _add_buttons_promise(frm)
-			: _add_buttons_sync(frm);
+		// has_role returns true or undefined (never a promise): reading .then on
+		// undefined threw for every non-HR approver, so line managers got no buttons
+		_add_buttons(frm, !!frappe.user.has_role(["HR Manager", "HR User"]));
 	},
 });
-
-function _add_buttons_sync(frm) {
-	const is_hr = frappe.user.has_role(["HR Manager", "HR User"]);
-	_add_buttons(frm, is_hr);
-}
-
-function _add_buttons_promise(frm) {
-	const is_hr = frappe.user.has_role(["HR Manager", "HR User"]);
-	_add_buttons(frm, is_hr);
-}
 
 function _add_buttons(frm, is_hr) {
 	const forward_label = is_hr ? __("Approve") : __("Approve & Forward");

@@ -84,9 +84,9 @@ def _apply_leave_workflow(doc, next_state: str) -> bool:
     """
     Move the leave to `next_state` through the active Leave Application workflow.
 
-    A workflow (hr_suite ships one) refuses a hand-set Approved/Rejected on a draft;
+    A workflow (when a site has one) refuses a hand-set Approved/Rejected on a draft;
     its own transition sets the status and submits in one step. Returns False when
-    no workflow is active, so the caller keeps the plain status update.
+    no workflow is active, so the caller records the decision itself.
     """
     from frappe.model.workflow import apply_workflow, get_transitions, get_workflow_name
 
@@ -104,6 +104,17 @@ def _apply_leave_workflow(doc, next_state: str) -> bool:
         )
     apply_workflow(doc, action)
     return True
+
+
+def _record_decision(doc, status: str):
+    """
+    Without a workflow the approver's decision is final: set the status and submit,
+    as HRMS does. A leave saved Approved but left in Draft deducts no balance, marks
+    no attendance and offers no Submit button to the approver.
+    """
+    doc.status = status
+    doc.flags.ignore_permissions = True
+    doc.submit()
 
 
 # ─── Permission query condition ───────────────────────────────────────────────
@@ -151,15 +162,16 @@ def before_save(doc, method=None):
 
 def before_submit(doc, method=None):
     """
-    Block submit unless the leave is Approved (or the submitter is HR).
-    This prevents employees from self-submitting unapproved leaves.
+    Block submit unless the leave is decided (or the submitter is HR).
+    This prevents employees from self-submitting unapproved leaves; a Rejected
+    leave takes nothing, and a line manager's rejection submits it.
     """
     if _user_is_hr():
         return
 
-    if doc.get("status") != "Approved":
+    if doc.get("status") not in ("Approved", "Rejected"):
         frappe.throw(
-            _("Leave Application must be Approved before it can be submitted."),
+            _("Leave Application must be Approved or Rejected before it can be submitted."),
             title=_("Approval Required"),
         )
 
@@ -183,8 +195,7 @@ def forward_leave(docname: str, designation: str = None) -> str:
 
     if designation == "hr":
         if not _apply_leave_workflow(doc, "Approved"):
-            doc.status = "Approved"
-            doc.save(ignore_permissions=True)
+            _record_decision(doc, "Approved")
         frappe.db.commit()
         return _("Leave application approved.")
 
@@ -233,11 +244,15 @@ def reject_leave(docname: str, reason: str = "") -> str:
         rejection_note = _("Rejected by {0}: {1}").format(frappe.session.user, reason)
         doc.description = f"{description}\n\n{rejection_note}".strip() if description else rejection_note
 
-    # the workflow reloads the document, so the note is saved (still Open) first
-    doc.save(ignore_permissions=True)
-    if not _apply_leave_workflow(doc, "Rejected"):
-        doc.status = "Rejected"
+    from frappe.model.workflow import get_workflow_name
+
+    if get_workflow_name("Leave Application"):
+        # the workflow reloads the document, so the note is saved (still Open) first
         doc.save(ignore_permissions=True)
+        _apply_leave_workflow(doc, "Rejected")
+    else:
+        # the note goes in with the decision: one submit, no separate edit of a pending leave
+        _record_decision(doc, "Rejected")
     frappe.db.commit()
 
     # Notify the applicant
