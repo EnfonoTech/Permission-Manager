@@ -192,8 +192,78 @@ def _only_pending_docs(actions: list) -> list:
 
 # ─── Main API ─────────────────────────────────────────────────────────────────
 
+def _ladder_leave_items(user: str) -> list:
+    """Leave applications waiting on `user` along the employee approval chain, as inbox rows.
+
+    A ladder-approved leave has no PM Workflow Action (it moves on `leave_approver`), so the
+    action table that feeds this page never knew about it: the approver the chain had named saw
+    nothing here. Shaped like a PM row so the page draws it unchanged; `ladder` tells it to leave
+    the ad-hoc forward button off, which only a PM Workflow Action can use.
+    """
+    from permission_manager.permission_manager.ladder_approve.leave_application.api import (
+        APPROVE_ACTIONS,
+        REJECT_ACTION,
+        leaves_waiting_on,
+    )
+
+    rows = leaves_waiting_on(user)
+    if not rows:
+        return []
+
+    now = now_datetime()
+    items = []
+    for r in rows:
+        approve = APPROVE_ACTIONS[0] if r.final else APPROVE_ACTIONS[1]
+        items.append({
+            "name": "ladder::Leave Application::" + r.name,
+            "doctype": "Leave Application",
+            "transaction": transaction_label("Leave Application", False),
+            "transaction_filter": transaction_filter_value("Leave Application", False),
+            "docname": r.name,
+            "date": frappe.utils.format_datetime(r.creation, "dd/MM/yy HH:mm"),
+            "creation_iso": str(r.creation)[:10],
+            "priority": "Medium",
+            "state": _("Level {0}").format(r.level) if r.level else _("Awaiting approval"),
+            "role_id": _("Approval Chain"),
+            "holder": "",
+            "days": int((now - r.creation).total_seconds() / 86400),
+            # the row is about the person who is away, not the HR clerk who typed it in
+            "creator": r.employee_name or r.employee or "",
+            "category": "Approval Pending",
+            "available_actions": [approve, REJECT_ACTION],
+            "doc_url": "/app/" + _safe_slug("Leave Application") + "/" + r.name,
+            "is_adhoc": False,
+            "adhoc_for": "",
+            "return_to_originator": False,
+            "is_waiting": False,
+            "waiting_with": "",
+            "ladder": True,
+        })
+    return items
+
+
 @frappe.whitelist()
 def get_my_pending_approvals() -> dict:
+    """Everything waiting on the current user: PM Workflow Actions, plus leave applications
+    sitting with them on the employee approval chain."""
+    data = _pm_pending_approvals()
+    ladder = _ladder_leave_items(frappe.session.user)
+    if not ladder:
+        return data
+
+    grouped = {g["label"]: list(g["items"]) for g in data["groups"]}
+    grouped.setdefault("Approval Pending", []).extend(ladder)
+    for items in grouped.values():
+        items.sort(key=lambda x: (_PRIORITY_WEIGHT.get(x["priority"], 3), -x["days"]))
+
+    category_order = ["Approval Pending", "Decision Pending", "Acknowledgement Pending"]
+    return {
+        "groups": [{"label": cat, "items": grouped[cat]} for cat in category_order if cat in grouped],
+        "total": data["total"] + len(ladder),
+    }
+
+
+def _pm_pending_approvals() -> dict:
     """
     Return all open PM Workflow Actions where the current user is the approver.
 
@@ -504,6 +574,17 @@ def quick_apply_workflow_action(
     doctype: str, docname: str, action: str, comment: str = "", priority: str = "Medium"
 ) -> dict:
     """Apply a PM Workflow transition directly from the Approval Inbox."""
+    if doctype == "Leave Application":
+        # a leave on the employee approval chain has no PM Workflow Action: the buttons on its
+        # row are the chain's own steps (None back means this action is not one of them)
+        from permission_manager.permission_manager.ladder_approve.leave_application.api import (
+            apply_inbox_action,
+        )
+
+        message = apply_inbox_action(docname, action, comment)
+        if message is not None:
+            return {"success": True, "docname": docname, "action": action, "message": message}
+
     from permission_manager.permission_manager.workflow import apply_workflow
 
     doc = frappe.get_doc(doctype, docname)
@@ -1179,6 +1260,13 @@ def get_document_lifecycle(doctype: str, docname: str) -> dict:
         "PM Workflow", {"document_type": doctype, "is_active": 1}, "name"
     )
     if not wf:
+        if doctype == "Leave Application":
+            # no workflow, but a leave still travels its employee's approval chain
+            from permission_manager.permission_manager.ladder_approve.leave_application.api import (
+                lifecycle,
+            )
+
+            return lifecycle(docname)
         return {"chain": [], "roles": []}
 
     doc = frappe.get_doc(doctype, docname)

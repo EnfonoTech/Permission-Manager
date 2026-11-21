@@ -418,8 +418,12 @@ export class ApprovalInbox {
                 __("Forwarded — waiting on {0}", [item.waiting_with || __("another approver")])
             }">${__("Waiting")}${item.waiting_with ? ": " + esc(item.waiting_with) : ""}</span>`;
         }
-        // Forward button — only for non-adhoc actions (can't forward an already-forwarded ad-hoc)
-        if (!item.is_adhoc && !item.is_waiting) {
+        // A leave on the employee approval chain has no PM Workflow Action to hand on: its own
+        // "Approve & Forward" is the way up, so there is nothing for the ad-hoc buttons to act on.
+        if (item.ladder) {
+            // intentionally none
+        } else if (!item.is_adhoc && !item.is_waiting) {
+            // Forward button — only for non-adhoc actions (can't forward an already-forwarded ad-hoc)
             act_html += `<button class="btn btn-xs btn-default ps-ai-fwd-btn"
                 data-name="${esc(item.name)}"
                 data-docname="${esc(item.docname)}"
@@ -749,7 +753,11 @@ export class ApprovalInbox {
                     fieldtype: "Small Text",
                     fieldname: "comment",
                     label: __("Comment"),
-                    description: __("Optional note added to the document."),
+                    // a leave cannot be rejected without saying why, here or on the form
+                    reqd: doctype === "Leave Application" && action === "Reject" ? 1 : 0,
+                    description: doctype === "Leave Application" && action === "Reject"
+                        ? __("Sent to the employee with the rejection.")
+                        : __("Optional note added to the document."),
                 },
             ],
             primary_action_label: __(action),
