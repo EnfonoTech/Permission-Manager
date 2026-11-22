@@ -11,7 +11,8 @@ Two pieces:
 
 Routing summary:
   * Purchase Invoice — by account group (service), currency (local/import), or Asset item.
-  * Purchase Order   — Branch Head, or the Asset chain for fixed-asset POs.
+  * Purchase Order   — PO Approver (Branch Head where the site has no such role), or the
+                       Asset chain for fixed-asset POs.
   * Journal Entry    — by Journal Entry Template.
   * Payment Entry    — by supplier-payment category (advance vs PI payment).
 """
@@ -30,6 +31,10 @@ PI_IMPORT_ROLE = "Purchase Approver"        # material, foreign currency
 # role fall back to the built-in, so this can never generate a transition naming a role that
 # does not exist there.
 PI_IMPORT_ROLE_FALLBACK = "Purchase Manager"
+# A normal Purchase Order is approved by `PO Approver` when the site has created that role (one
+# named person or a small team, whatever the branch), else by `Branch Head` as before.
+PO_APPROVER_ROLE = "PO Approver"
+PO_APPROVER_FALLBACK = "Branch Head"
 JE_INITIATE_ROLE = "Accounts User"          # creates + sends / submits normal JVs
 
 # Journal templates that need no approval at all: the initiator (or an Accountant) submits
@@ -103,7 +108,7 @@ def stamp_purchase_invoice(doc, method=None):
 
 def stamp_purchase_order(doc, method=None):
 	"""before_save(Purchase Order): tag fixed-asset POs with the 'Asset' group so they
-	route Dept Head → GM → Accountant. All other POs stay on the Branch Head flow."""
+	route Dept Head → GM → Accountant. All other POs stay on the normal flow (PO Approver)."""
 	if not frappe.db.has_column("Purchase Order", FIELD):
 		return
 	group = ""
@@ -395,23 +400,36 @@ def _build_je(groups):
 	_build("Journal Entry", "Journal Entry Approval", states, tx)
 
 
+def po_approver_role() -> str:
+	"""The role that approves a normal Purchase Order.
+
+	Resolved rather than constant so a site that never created the PO Approver role keeps
+	the Branch Head flow instead of generating a transition pointing at a Role that does not
+	exist there (and a rebuild can never strand a PO on a role nobody holds)."""
+	if frappe.db.exists("Role", PO_APPROVER_ROLE):
+		return PO_APPROVER_ROLE
+	return PO_APPROVER_FALLBACK
+
+
 def _build_po(groups):
-	"""Purchase Order: normal POs → Branch Head. Send requires a Quotation attachment
-	UNLESS 'Verbal' is ticked (mandatory Verbal Comment stands in). Fixed-asset POs
-	(custom_approval_group == 'Asset') route through the Asset chain instead."""
+	"""Purchase Order: normal POs → PO Approver (Branch Head on a site without that role).
+	Send requires a Quotation attachment UNLESS 'Verbal' is ticked (mandatory Verbal
+	Comment stands in). Fixed-asset POs (custom_approval_group == 'Asset') route through
+	the Asset chain instead."""
 	VERBAL = "doc.custom_verbal"
 	NOTVERBAL = "not doc.custom_verbal"
 	NOASSET = "not doc.custom_approval_group"
+	approver = po_approver_role()
 	tx = [
 		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
 		_t("Draft", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
-		_t("Pending", "Approve", "Approved", "Branch Head", cond=NOASSET),
-		_t("Pending", "Reject", "Rejected", "Branch Head", cond=NOASSET, rfc=1, comment=1),
+		_t("Pending", "Approve", "Approved", approver, cond=NOASSET),
+		_t("Pending", "Reject", "Rejected", approver, cond=NOASSET, rfc=1, comment=1),
 		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=VERBAL, self_appr=1),
 		_t("Rejected", "Send for Approval", "Pending", "Purchase User", cond=NOTVERBAL, self_appr=1, attach=1),
 	]
 	asset = {k: v for k, v in (groups or {}).items() if k == ASSET_GROUP}
-	states = [_st("Draft", "0", "Purchase User"), _st("Pending", "0", "Branch Head"),
+	states = [_st("Draft", "0", "Purchase User"), _st("Pending", "0", approver),
 	          _st("Approved", "1", "Purchase Manager"), _st("Rejected", "0", "Purchase User")]
 	if asset:
 		maxl = _max_level(asset)
