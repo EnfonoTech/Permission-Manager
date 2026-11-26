@@ -400,6 +400,16 @@ class TestRebuildKeepsOneCommonWorkflow(FrappeTestCase):
 		_build(TARGET, WF, self.states, self.tx)
 		self.assertFalse(frappe.db.get_value("PM Workflow", WF, "company"))
 
+	def test_rebuilt_workflow_carries_no_company(self):
+		# Frappe fills an empty Link with the inserting user's "company" default on insert, which
+		# bound every generated workflow to the rebuilder's company (2026-11-26)
+		with_default = frappe.defaults.get_defaults().get("company")
+		_build(TARGET, WF, self.states, self.tx)
+		self.assertFalse(frappe.db.get_value("PM Workflow", WF, "company"),
+		                 "generated workflow bound to %s" % with_default)
+		self.assertFalse(frappe.get_all("PM Workflow Transition",
+		                                filters={"parent": WF, "company": ["is", "set"]}))
+
 	def test_inactive_workflow_stays_inactive(self):
 		_build(TARGET, WF, self.states, self.tx)
 		frappe.db.set_value("PM Workflow", WF, "is_active", 0)

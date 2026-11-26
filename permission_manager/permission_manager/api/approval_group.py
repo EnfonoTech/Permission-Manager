@@ -337,13 +337,31 @@ def _build(document_type, workflow_name, states, transitions):
 		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
-	frappe.get_doc({
+	doc = frappe.get_doc({
 		"doctype": "PM Workflow", "workflow_name": workflow_name, "document_type": document_type,
 		"is_active": is_active, "workflow_state_field": "workflow_state",
 		"send_email_alert": send_email_alert,
 		"states": states + extra_states, "transitions": transitions + extra_transitions,
-	}).insert(ignore_permissions=True)
+	})
+	doc.insert(ignore_permissions=True)
+	_make_common(doc.name)
 	_warn_company_copies(document_type, workflow_name)
+
+
+def _make_common(workflow_name):
+	"""Clear the company Frappe stamps on insert.
+
+	An empty Link is filled with the inserting user's default on insert (Document._set_defaults ->
+	the "company" default), so every generated workflow was bound to the company of whoever ran
+	the rebuild — Steel Force's all carried Trading WLL, and a rebuild by an Oman user would have
+	bound them to Oman. The engine reads only the parent's company; the rows' are cleared too so
+	the screen does not suggest otherwise."""
+	frappe.db.set_value("PM Workflow", workflow_name, "company", None, update_modified=False)
+	for child in ("PM Workflow Document State", "PM Workflow Transition"):
+		if frappe.get_meta(child).has_field("company"):
+			frappe.db.set_value(child, {"parent": workflow_name, "parenttype": "PM Workflow"},
+			                    "company", None, update_modified=False)
+	frappe.clear_document_cache("PM Workflow", workflow_name)
 
 
 def _group_stage_transitions(groups, cond_for, level1_state, level2_plus):
