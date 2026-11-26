@@ -287,8 +287,7 @@ class TestPISendNeedsAttachment(FrappeTestCase):
 
 		from permission_manager.permission_manager.api import approval_group
 
-		with patch.object(approval_group, "_build") as build, \
-				patch.object(approval_group, "_company_currency", return_value="BHD"):
+		with patch.object(approval_group, "_build") as build:
 			approval_group._build_pi({})
 		_dt, _name, _states, tx = build.call_args[0]
 		sends = [t for t in tx if t["action"] == "Send for Approval"]
@@ -297,3 +296,114 @@ class TestPISendNeedsAttachment(FrappeTestCase):
 		# approve / reject stay free of it unless the stage asks
 		self.assertTrue(all(t["require_attachment"] == 0 for t in tx
 		                    if t["action"] in ("Approve", "Reject")))
+
+
+class TestPICurrencyFollowsTheInvoiceCompany(FrappeTestCase):
+	"""Local vs import is the invoice's own company currency, not a literal.
+
+	The generator used to bake the site default company's currency in ('BHD'), so a second
+	company in another currency (Steel Force Oman, OMR) routed every invoice as an import and
+	the workflow had to be copied per company (2026-11-26).
+	"""
+
+	def _conditions(self):
+		from unittest.mock import patch
+
+		from permission_manager.permission_manager.api import approval_group
+
+		with patch.object(approval_group, "_build") as build:
+			approval_group._build_pi({})
+		tx = build.call_args[0][3]
+		local = next(t["condition"] for t in tx
+		             if t["action"] == "Approve" and t["allowed"] == approval_group.PI_LOCAL_ROLE)
+		imp = next(t["condition"] for t in tx
+		           if t["action"] == "Approve" and t["allowed"] == approval_group.pi_import_role())
+		return local, imp
+
+	def _eval(self, cond, **doc):
+		from permission_manager.permission_manager.workflow import get_workflow_safe_globals
+
+		base = {"is_return": 0, "custom_approval_group": None}
+		base.update(doc)
+		return bool(frappe.safe_eval(cond, get_workflow_safe_globals(), {"doc": frappe._dict(base)}))
+
+	def test_no_currency_literal_is_baked_in(self):
+		for cond in self._conditions():
+			self.assertNotIn("'BHD'", cond)
+			self.assertIn("doc.company", cond)
+
+	def test_each_company_is_local_in_its_own_currency(self):
+		local, imp = self._conditions()
+		companies = frappe.get_all("Company", fields=["name", "default_currency"], limit=5)
+		self.assertTrue(companies, "test site has no company")
+		for c in companies:
+			self.assertTrue(self._eval(local, company=c.name, currency=c.default_currency), c.name)
+			self.assertFalse(self._eval(imp, company=c.name, currency=c.default_currency), c.name)
+			other = "USD" if c.default_currency != "USD" else "EUR"
+			self.assertFalse(self._eval(local, company=c.name, currency=other), c.name)
+			self.assertTrue(self._eval(imp, company=c.name, currency=other), c.name)
+
+	def test_a_return_is_local_whatever_the_currency(self):
+		local, imp = self._conditions()
+		company = frappe.get_all("Company", pluck="name", limit=1)[0]
+		self.assertTrue(self._eval(local, company=company, currency="XYZ", is_return=1))
+		self.assertFalse(self._eval(imp, company=company, currency="XYZ", is_return=1))
+
+
+class TestRebuildKeepsOneCommonWorkflow(FrappeTestCase):
+	"""One common workflow per doctype; company copies are the site's own (2026-11-26).
+
+	`_build` used to look the existing workflow up by document_type alone, so with a "... Oman"
+	copy present it could delete the copy, then fail inserting the standard name that still
+	existed. It also switched an inactive workflow back on.
+	"""
+
+	COPY = "Test Carry Over Workflow Copy"
+
+	def setUp(self):
+		self.company = frappe.get_all("Company", pluck="name", limit=1)[0]
+		self._drop()
+		self.states = [_st("Draft", "0", "System Manager"), _st("Approved", "1", "System Manager")]
+		self.tx = [_t("Draft", "Approve", "Approved", "System Manager")]
+
+	def tearDown(self):
+		self._drop()
+
+	def _drop(self):
+		for name in frappe.get_all("PM Workflow", filters={"document_type": TARGET}, pluck="name"):
+			frappe.delete_doc("PM Workflow", name, force=1)
+		cf = frappe.db.get_value("Custom Field", {"dt": TARGET, "fieldname": "workflow_state"})
+		if cf:
+			frappe.delete_doc("Custom Field", cf, force=1)
+		frappe.db.commit()
+
+	def _copy(self, active=0):
+		frappe.get_doc({
+			"doctype": "PM Workflow", "workflow_name": self.COPY, "document_type": TARGET,
+			"company": self.company, "is_active": active, "workflow_state_field": "workflow_state",
+			"states": self.states, "transitions": self.tx,
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+	def test_company_copy_survives_and_common_one_is_rebuilt(self):
+		_build(TARGET, WF, self.states, self.tx)
+		self._copy()
+		_build(TARGET, WF, self.states, self.tx)  # used to delete the copy, then fail
+		self.assertTrue(frappe.db.exists("PM Workflow", self.COPY))
+		self.assertTrue(frappe.db.exists("PM Workflow", WF))
+		self.assertFalse(frappe.db.get_value("PM Workflow", WF, "company"))
+
+	def test_standard_name_bound_to_a_company_is_made_common(self):
+		_build(TARGET, WF, self.states, self.tx)
+		frappe.db.set_value("PM Workflow", WF, "company", self.company)
+		frappe.db.commit()
+		_build(TARGET, WF, self.states, self.tx)
+		self.assertFalse(frappe.db.get_value("PM Workflow", WF, "company"))
+
+	def test_inactive_workflow_stays_inactive(self):
+		_build(TARGET, WF, self.states, self.tx)
+		frappe.db.set_value("PM Workflow", WF, "is_active", 0)
+		frappe.db.commit()
+		_build(TARGET, WF, self.states, self.tx)
+		self.assertEqual(frappe.db.get_value("PM Workflow", WF, "is_active"), 0,
+		                 "rebuild switched an inactive workflow back on")

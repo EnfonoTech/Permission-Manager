@@ -195,9 +195,12 @@ def _pytuple(names):
 	return "(" + ", ".join(["%r" % n for n in names]) + ("," if len(names) == 1 else "") + ")"
 
 
-def _company_currency():
-	comp = frappe.defaults.get_global_default("company") or frappe.db.get_value("Company", {}, "name")
-	return frappe.get_cached_value("Company", comp, "default_currency") if comp else "BHD"
+# Local vs import is decided against the invoice's OWN company currency, looked up when the
+# condition is evaluated. It used to be the site's default company currency baked in as a
+# literal ('BHD'), so on a site with a second company in another currency (Steel Force Oman,
+# OMR) every invoice of that company routed as an import, and the workflow had to be copied
+# per company. Workflow conditions may call frappe.db.get_value (get_workflow_safe_globals).
+COMPANY_CURRENCY_EXPR = "frappe.db.get_value('Company', doc.company, 'default_currency')"
 
 
 def _stage_states(entry_states, k):
@@ -286,22 +289,61 @@ def _carry_over_manual_rows(existing, states, transitions):
 	return extra_states, [_strip_meta(r) for r in kept]
 
 
+def _common_workflow(document_type, workflow_name=None):
+	"""The workflow this config owns for a doctype: ONE common workflow (no company).
+
+	The workflow carrying the standard name is it, whatever company it was once bound to (a
+	rebuild takes it over and makes it common). Failing that, the doctype's company-blank
+	workflow. A company-specific copy under another name ("... Oman") is a site's own choice:
+	it is never picked here, so a rebuild can no longer delete it in place of the common one and
+	then fail on the duplicate name.
+	"""
+	if workflow_name and frappe.db.exists("PM Workflow", workflow_name):
+		return workflow_name
+	return frappe.db.get_value(
+		"PM Workflow", {"document_type": document_type, "company": ["is", "not set"]}, "name")
+
+
+def _warn_company_copies(document_type, keep):
+	"""A company-specific workflow wins over the common one for its company
+	(workflow.get_workflow_name), so an ACTIVE copy silently keeps that company off the
+	regenerated routing. Say so instead of touching it."""
+	copies = frappe.get_all(
+		"PM Workflow",
+		filters={"document_type": document_type, "name": ["!=", keep], "is_active": 1,
+		         "company": ["is", "set"]},
+		fields=["name", "company"])
+	if copies:
+		frappe.log_error(
+			title="PM Workflow rebuild: company copies of %s" % document_type,
+			message=frappe.as_json({
+				"common_workflow": keep,
+				"active_company_copies_override_it": [
+					"%s (%s)" % (c.name, c.company) for c in copies],
+			}),
+		)
+
+
 def _build(document_type, workflow_name, states, transitions):
-	ex = frappe.db.get_value("PM Workflow", {"document_type": document_type}, "name")
+	ex = _common_workflow(document_type, workflow_name)
 	# whether approval emails fire is an operational switch a site flips — Steel Force has it off
 	# while no outgoing account is configured — not something this config derives, so a rebuild
-	# must leave it as it found it
+	# must leave it as it found it. The same goes for whether the workflow is active at all: a
+	# site that switched one off (Steel Force: Payment Entry) must not find it back on after a
+	# migrate or an approval-group save.
 	send_email_alert = cint(frappe.db.get_value("PM Workflow", ex, "send_email_alert")) if ex else 1
+	is_active = cint(frappe.db.get_value("PM Workflow", ex, "is_active")) if ex else 1
 	extra_states, extra_transitions = (
 		_carry_over_manual_rows(ex, states, transitions) if ex else ([], []))
 	if ex:
 		frappe.delete_doc("PM Workflow", ex, force=1)
 	frappe.get_doc({
 		"doctype": "PM Workflow", "workflow_name": workflow_name, "document_type": document_type,
-		"is_active": 1, "workflow_state_field": "workflow_state",
+		"is_active": is_active, "workflow_state_field": "workflow_state",
 		"send_email_alert": send_email_alert,
 		"states": states + extra_states, "transitions": transitions + extra_transitions,
 	}).insert(ignore_permissions=True)
+	_warn_company_copies(document_type, workflow_name)
 
 
 def _group_stage_transitions(groups, cond_for, level1_state, level2_plus):
@@ -345,10 +387,10 @@ def pi_import_role() -> str:
 
 
 def _build_pi(groups):
-	cur = _company_currency()
+	cur = COMPANY_CURRENCY_EXPR
 	imp = pi_import_role()
-	LOCAL = "doc.is_return or ((not doc.custom_approval_group) and doc.currency == %r)" % cur
-	IMPORT = "(not doc.custom_approval_group) and (not doc.is_return) and doc.currency != %r" % cur
+	LOCAL = "doc.is_return or ((not doc.custom_approval_group) and doc.currency == %s)" % cur
+	IMPORT = "(not doc.custom_approval_group) and (not doc.is_return) and doc.currency != %s" % cur
 	tx = [
 		# every Purchase Invoice goes up with its supplier bill attached, group or no group
 		_t("Draft", "Send for Approval", "Pending", PI_INITIATE_ROLE, self_appr=1, attach=1),
@@ -471,6 +513,14 @@ def _build_payment_entry():
 	_build("Payment Entry", "Payment Entry Approval", states, tx)
 
 
+_WORKFLOW_NAMES = {
+	"Purchase Order": "Purchase Order Approval",
+	"Purchase Invoice": "Purchase Invoice Approval",
+	"Journal Entry": "Journal Entry Approval",
+	"Payment Entry": "Payment Entry Approval",
+}
+
+
 def _grant_perms():
 	"""Give every role used in the two workflows the DocType perms it needs, so
 	apply_workflow (which saves/submits AS the acting user) doesn't hit PermissionError."""
@@ -484,7 +534,7 @@ def _grant_perms():
 		return False
 
 	for dt in ("Purchase Order", "Purchase Invoice", "Journal Entry", "Payment Entry"):
-		wf = frappe.db.get_value("PM Workflow", {"document_type": dt}, "name")
+		wf = _common_workflow(dt, _WORKFLOW_NAMES.get(dt))
 		if not wf:
 			continue
 		d = frappe.get_doc("PM Workflow", wf)
